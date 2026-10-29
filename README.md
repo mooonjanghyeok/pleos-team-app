@@ -2,5 +2,5 @@
 
 Hyundai Vehicle App Development Challenge - Team Project
 
-pc to github 연결테스트성공
+pc2 github 연결테스트성공
 
