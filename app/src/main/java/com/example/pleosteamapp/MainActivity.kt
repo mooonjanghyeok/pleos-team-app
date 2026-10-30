@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
             PleosTeamAppTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Greeting(
-                        name = "Android",
+                        name = "PC2",
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -42,6 +42,6 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
 @Composable
 fun GreetingPreview() {
     PleosTeamAppTheme {
-        Greeting("Android")
+        Greeting("PC2")
     }
 }
