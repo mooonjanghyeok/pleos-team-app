@@ -17,7 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.pleosteamapp.ui.theme.PleosTeamAppTheme
-
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.graphics.Color
 data class DoorUiState(
     val busy: Boolean = false,
     val canRead: Boolean = false,
@@ -64,7 +65,13 @@ fun VehicleDoorScreen(
             Button(
                 onClick = onConnect,
                 enabled = !state.busy,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1E40AF),
+                    contentColor = Color.White,
+                    disabledContainerColor = Color.LightGray,
+                    disabledContentColor = Color.DarkGray
+                )
             ) {
                 Text("① SDK 연결 · 지원 확인")
             }
@@ -72,7 +79,13 @@ fun VehicleDoorScreen(
             Button(
                 onClick = onRead,
                 enabled = state.canRead && !state.busy,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1E40AF),
+                    contentColor = Color.White,
+                    disabledContainerColor = Color.LightGray,
+                    disabledContentColor = Color.DarkGray
+                )
             ) {
                 Text("② 문 상태 조회")
             }
