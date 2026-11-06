@@ -91,11 +91,12 @@ class MainActivity : ComponentActivity() {
                     Box(
                         modifier = Modifier.weight(1f)
                     ) {
-                        VehicleDoorScreen(
+                        KDriveGuideApp()
+                        /*VehicleDoorScreen(
                             state = screenState,
                             onConnect = { connectAndCheckSupport() },
                             onRead = { readDoorPosition() }
-                        )
+                        )*/
                     }
 
                     // TTS 테스트 버튼
