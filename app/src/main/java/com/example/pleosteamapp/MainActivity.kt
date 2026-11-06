@@ -17,12 +17,24 @@ import com.example.pleosteamapp.ui.theme.PleosTeamAppTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
 
     private var screenState by mutableStateOf(DoorUiState())
 
     private var vehicle: Vehicle? = null
+
+    // TTS 테스트 객체
+    private var ttsProbe: PleosTtsProbe? = null
+    private var naviProbe: NaviProbe? = null
+    private var fusedProbe: FusedLocationProbe? = null
+
+    private var androidGpsProbe: AndroidGpsProbe? = null
     private val selectedArea = DoorArea(DoorValue.ROW_1_LEFT)
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -37,15 +49,85 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Pleos TTS 초기화 및 영어 음성 출력 테스트
+        try {
+            ttsProbe = PleosTtsProbe(applicationContext)
+            ttsProbe?.start()
+        } catch (error: Exception) {
+            Log.e("PLEOS_TTS_TEST", "TTS 시작 실패", error)
+        }
+// NaviHelper 연결 및 데이터 확인
+
+        // ① NaviHelper 연결 및 데이터 확인
+        try {
+            naviProbe = NaviProbe(applicationContext)
+            naviProbe?.start()
+        } catch (error: Exception) {
+            Log.e("PLEOS_NAVI_TEST", "NaviHelper 시작 실패", error)
+        }
+
+        // ② FusedLocation 지원 여부 및 초기화 확인
+        try {
+            fusedProbe = FusedLocationProbe(applicationContext)
+            fusedProbe?.start()
+        } catch (error: Exception) {
+            Log.e("PLEOS_FUSED_TEST", "시작 실패", error)
+        }
+// Android GPS 직접 수신 테스트
+        try {
+            androidGpsProbe = AndroidGpsProbe(this)
+            androidGpsProbe?.start()
+        } catch (error: Exception) {
+            Log.e("ANDROID_GPS_TEST", "GPS 시작 실패", error)
+        }
+        // ③ 기존 화면 - 여기부터는 수정하지 않음
         setContent {
-            PleosTeamAppTheme {
-                VehicleDoorScreen(
-                    state = screenState,
-                    onConnect = { connectAndCheckSupport() },
-                    onRead = { readDoorPosition() }
-                )
+
+        PleosTeamAppTheme {
+                Column(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    // 기존 차량 도어 화면
+                    Box(
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        VehicleDoorScreen(
+                            state = screenState,
+                            onConnect = { connectAndCheckSupport() },
+                            onRead = { readDoorPosition() }
+                        )
+                    }
+
+                    // TTS 테스트 버튼
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement =
+                            Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                ttsProbe?.speakEnglish()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("영어 음성 재생")
+                        }
+
+                        Button(
+                            onClick = {
+                                ttsProbe?.stopSpeech()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("음성 중지")
+                        }
+                    }
+                }
             }
         }
+
     }
 
     private fun connectAndCheckSupport() {
@@ -262,8 +344,44 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         disposed = true
         requestId++
+
         mainHandler.removeCallbacksAndMessages(null)
+
+        // 기존 Vehicle SDK 종료
         releaseVehicle()
+
+        // TTS SDK 종료
+        try {
+            ttsProbe?.release()
+        } catch (error: Exception) {
+            Log.e("PLEOS_TTS_TEST", "TTS 종료 실패", error)
+        } finally {
+            ttsProbe = null
+        }
+// NaviHelper 종료
+        try {
+            naviProbe?.release()
+        } catch (error: Exception) {
+            Log.e("PLEOS_NAVI_TEST", "NaviHelper 종료 실패", error)
+        } finally {
+            naviProbe = null
+            // FusedLocation SDK 종료
+            try {
+                fusedProbe?.release()
+            } catch (error: Exception) {
+                Log.e("PLEOS_FUSED_TEST", "종료 실패", error)
+            } finally {
+                fusedProbe = null
+            }
+            // Android GPS 수신 종료
+            try {
+                androidGpsProbe?.stop()
+            } catch (error: Exception) {
+                Log.e("ANDROID_GPS_TEST", "GPS 종료 실패", error)
+            } finally {
+                androidGpsProbe = null
+            }
+        }
         super.onDestroy()
     }
 }
