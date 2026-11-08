@@ -1,901 +1,660 @@
 
 package com.example.pleosteamapp
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
+
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 
 /*
  * K-DRIVE GUIDE - PC2
  *
- * Traffic Rules UI
+ * Traffic Rules Screen
  *
- * - 기존 6개 + 신규 5개 = 총 11개
- * - 3개 카테고리
- * - Landscape / Portrait 대응
- * - Play / Stop / Replay 콜백
+ * - 11 driving situations
+ * - 3 categories
+ * - Play / Stop / Replay
+ * - Landscape / Portrait Preview
+ * - Driving restriction support
  *
- * 실제 NaviHelper, GPS, TTS는 PC1에서 연결한다.
- * 안내 문구는 최종 법규 검증 전 초안이다.
+ * PC1 owns NaviHelper, TTS and the guidance engine.
  */
 
-// -------------------------------------------------
-// 1. 카테고리 정의
-// -------------------------------------------------
-
-private enum class TrafficGroup(
-    val title: String,
-    val koreanTitle: String
-) {
-    INTERSECTIONS(
-        "Intersections & Signals",
-        "교차로 및 신호"
-    ),
-
-    ROAD_SAFETY(
-        "Road Safety",
-        "도로 안전"
-    ),
-
-    HIGHWAY(
-        "Highway & Essentials",
-        "고속도로 및 기본규칙"
-    )
-}
-
-// -------------------------------------------------
-// 2. 교통규칙 데이터 구조
-// -------------------------------------------------
-
-private data class TrafficRuleItem(
+private data class KDriveRule(
     val id: String,
-    val group: TrafficGroup,
+    val category: String,
     val title: String,
-    val koreanTitle: String,
-    val description: String,
+    val korean: String,
+    val summary: String,
     val speech: String
 )
 
-// -------------------------------------------------
-// 3. 교통규칙 데이터 - 총 11개
-// -------------------------------------------------
+private val ruleGroups = listOf(
+    "Intersections",
+    "Road Safety",
+    "Essentials"
+)
 
-private val trafficRules = listOf(
+// -------------------------------------------
+// Traffic rule data - 11 situations
+// -------------------------------------------
 
-    // ===== 교차로 및 신호 =====
+private val rules = listOf(
 
-    TrafficRuleItem(
-        id = "roundabout",
-        group = TrafficGroup.INTERSECTIONS,
-        title = "Roundabout",
-        koreanTitle = "회전교차로",
-        description =
-            "Vehicles already circulating have priority. " +
-                    "Slow down and yield before entering.",
-        speech =
-            "You are approaching a roundabout. " +
-                    "Slow down and follow the signs. " +
-                    "Yield to vehicles already circulating. " +
-                    "Enter only when it is safe."
+    KDriveRule(
+        "roundabout",
+        "Intersections",
+        "Roundabout",
+        "회전교차로",
+        "Yield to circulating vehicles.",
+        "Slow down. Yield to vehicles already " +
+                "in the roundabout. Enter only when it is safe."
     ),
 
-    TrafficRuleItem(
-        id = "left_turn",
-        group = TrafficGroup.INTERSECTIONS,
-        title = "Unprotected Left Turn",
-        koreanTitle = "비보호 좌회전",
-        description =
-            "At a marked unprotected left turn, " +
-                    "follow the signals and yield to " +
-                    "oncoming traffic and pedestrians.",
-        speech =
-            "This is an unprotected left turn. " +
-                    "Check the traffic signal and signs. " +
-                    "Yield to oncoming vehicles and pedestrians. " +
-                    "Turn only when permitted and safe."
+    KDriveRule(
+        "left_turn",
+        "Intersections",
+        "Unprotected Left Turn",
+        "비보호 좌회전",
+        "Follow signals and yield before turning.",
+        "Check the traffic signal. Yield to oncoming " +
+                "traffic and pedestrians. Turn only when " +
+                "permitted and safe."
     ),
 
-    TrafficRuleItem(
-        id = "right_turn",
-        group = TrafficGroup.INTERSECTIONS,
-        title = "Right Turn",
-        koreanTitle = "우회전",
-        description =
-            "Check the traffic signal, dedicated " +
-                    "right-turn lights, and pedestrians. " +
-                    "Stop whenever required.",
-        speech =
-            "Before turning right, check the signals " +
-                    "and pedestrian crossings. " +
-                    "Stop when required. " +
-                    "Follow dedicated right turn signals " +
-                    "and proceed only when it is safe."
+    KDriveRule(
+        "right_turn",
+        "Intersections",
+        "Right Turn",
+        "우회전",
+        "Check signals and pedestrian crossings.",
+        "Check the right turn signals and pedestrians. " +
+                "Stop when required. Turn only when it is safe."
     ),
 
-    TrafficRuleItem(
-        id = "traffic_signals",
-        group = TrafficGroup.INTERSECTIONS,
-        title = "Traffic Signals & Flashing Lights",
-        koreanTitle = "신호등 및 점멸신호",
-        description =
-            "Flashing red and flashing yellow " +
-                    "signals have different meanings. " +
-                    "Red requires a complete stop. " +
-                    "Yellow requires extra caution.",
-        speech =
-            "Pay attention to flashing traffic lights. " +
-                    "At a flashing red light, come to a " +
-                    "complete stop before proceeding safely. " +
-                    "At a flashing yellow light, proceed " +
-                    "cautiously and follow road signs."
+    KDriveRule(
+        "signals",
+        "Intersections",
+        "Flashing Lights",
+        "신호등 및 점멸신호",
+        "Flashing red means stop; yellow means caution.",
+        "At flashing red, stop first. At flashing yellow, " +
+                "proceed carefully. Always check for other traffic."
     ),
 
-    TrafficRuleItem(
-        id = "yield_merge",
-        group = TrafficGroup.INTERSECTIONS,
-        title = "Yield & Merge",
-        koreanTitle = "양보 및 합류",
-        description =
-            "Check surrounding traffic and " +
-                    "yield where required. " +
-                    "Signal early and merge only when safe.",
-        speech =
-            "When merging into another lane, " +
-                    "check your mirrors and blind spots. " +
-                    "Use your turn signal. " +
-                    "Yield to traffic with the right of way " +
-                    "and merge only when there is enough space."
+    KDriveRule(
+        "yield",
+        "Intersections",
+        "Yield & Merge",
+        "양보 및 합류",
+        "Signal, check blind spots and yield.",
+        "Use your turn signal. Check mirrors and blind spots. " +
+                "Yield and merge only when there is enough space."
     ),
 
-    // ===== 도로 안전 =====
-
-    TrafficRuleItem(
-        id = "crossing_school",
-        group = TrafficGroup.ROAD_SAFETY,
-        title = "Pedestrian Crossing & School Zone",
-        koreanTitle = "횡단보도 및 어린이보호구역",
-        description =
-            "Watch for pedestrians and children. " +
-                    "Observe posted school zone speed limits. " +
-                    "Stop when required at crossings.",
-        speech =
-            "Watch carefully for pedestrians " +
-                    "at crosswalks. " +
-                    "Always stop when required. " +
-                    "In school zones, slow down, " +
-                    "follow posted speed limits " +
-                    "and watch for children."
+    KDriveRule(
+        "crossing",
+        "Road Safety",
+        "Crosswalk & School Zone",
+        "횡단보도 및 어린이보호구역",
+        "Watch for pedestrians and posted speed limits.",
+        "Watch for pedestrians. Stop when required at crossings. " +
+                "In school zones, follow posted limits " +
+                "and watch for children."
     ),
 
-    TrafficRuleItem(
-        id = "safe_distance",
-        group = TrafficGroup.ROAD_SAFETY,
-        title = "Safe Distance & Lane Changes",
-        koreanTitle = "안전거리 및 차로 변경",
-        description =
-            "Keep enough distance from vehicles ahead. " +
-                    "Signal and check blind spots " +
-                    "before changing lanes.",
-        speech =
-            "Maintain a safe following distance. " +
-                    "Avoid sudden lane changes. " +
-                    "Before changing lanes, use your turn signal, " +
-                    "check your mirrors and blind spots, " +
-                    "and move only when it is safe."
+    KDriveRule(
+        "distance",
+        "Road Safety",
+        "Following & Lane Changes",
+        "안전거리 및 차로 변경",
+        "Keep a safe distance and avoid sudden moves.",
+        "Keep a safe distance. Signal before changing lanes, " +
+                "check blind spots, and change lanes only when safe."
     ),
 
-    TrafficRuleItem(
-        id = "road_signs",
-        group = TrafficGroup.ROAD_SAFETY,
-        title = "Korean Road Signs",
-        koreanTitle = "한국 도로표지 이해",
-        description =
-            "Pay attention to Korean road signs, " +
-                    "lane markings, and supplementary signs. " +
-                    "Do not make sudden maneuvers " +
-                    "when a sign is unclear.",
-        speech =
-            "Pay attention to Korean traffic signs " +
-                    "and road markings. " +
-                    "Some supplementary signs contain " +
-                    "important Korean text. " +
-                    "If you are unsure, remain calm " +
-                    "and avoid sudden lane changes. " +
-                    "Follow the signs and drive safely."
+    KDriveRule(
+        "signs",
+        "Road Safety",
+        "Korean Road Signs",
+        "한국 도로표지 이해",
+        "Check road markings and supplementary signs.",
+        "Check traffic signs and road markings. " +
+                "If a sign is unclear, avoid sudden turns " +
+                "and continue safely."
     ),
 
-    // ===== 고속도로 및 기본규칙 =====
-
-    TrafficRuleItem(
-        id = "tollgate",
-        group = TrafficGroup.HIGHWAY,
-        title = "Tollgate & Hi-Pass",
-        koreanTitle = "톨게이트 및 하이패스",
-        description =
-            "Check payment lane signs in advance. " +
-                    "Use a lane that supports your " +
-                    "vehicle's payment method.",
-        speech =
-            "A tollgate is ahead. " +
-                    "Check the payment lane signs. " +
-                    "Use a lane that supports your payment method. " +
-                    "If you enter the wrong lane, " +
-                    "do not stop suddenly or reverse. " +
-                    "Continue safely and arrange payment later."
+    KDriveRule(
+        "toll",
+        "Essentials",
+        "Tollgate & Hi-Pass",
+        "톨게이트 및 하이패스",
+        "Check payment lanes before entering.",
+        "Choose a payment lane that suits your vehicle. " +
+                "Do not stop suddenly or reverse at a tollgate."
     ),
 
-    TrafficRuleItem(
-        id = "bus_lane",
-        group = TrafficGroup.HIGHWAY,
-        title = "Bus-Only Lane",
-        koreanTitle = "버스전용차로",
-        description =
-            "Bus-only lane restrictions depend " +
-                    "on the road and operating hours. " +
-                    "Check the signs before entering.",
-        speech =
-            "Be aware of bus-only lanes in Korea. " +
-                    "Some lanes are restricted to " +
-                    "eligible vehicles during specified hours. " +
-                    "Check the road signs before entering " +
-                    "a bus-only lane."
+    KDriveRule(
+        "bus",
+        "Essentials",
+        "Bus-Only Lane",
+        "버스전용차로",
+        "Check lane restrictions and operating hours.",
+        "Bus-only lane restrictions may vary. " +
+                "Check the signs and operating hours before entering."
     ),
 
-    TrafficRuleItem(
-        id = "parking",
-        group = TrafficGroup.HIGHWAY,
-        title = "Parking Rules",
-        koreanTitle = "주차 관련 규칙",
-        description =
-            "Check parking restrictions, signs, " +
-                    "road markings, and designated spaces.",
-        speech =
-            "Before parking your vehicle, " +
-                    "check local parking signs and restrictions. " +
-                    "Use a designated parking space. " +
-                    "Do not block crosswalks, intersections " +
-                    "or vehicle entrances."
+    KDriveRule(
+        "parking",
+        "Essentials",
+        "Parking Rules",
+        "주차 관련 규칙",
+        "Use permitted parking spaces.",
+        "Check parking signs. Use designated spaces " +
+                "and keep intersections, crosswalks, " +
+                "and vehicle entrances clear."
     )
 )
 
-// -------------------------------------------------
-// 4. 메인 UI
-// -------------------------------------------------
+// -------------------------------------------
+// Main Screen
+// -------------------------------------------
 
 @Composable
 fun TrafficRulesScreen(
     onBack: () -> Unit,
     onSpeakRequest: (String) -> Unit,
-    onStopRequest: () -> Unit
+    onStopRequest: () -> Unit,
+    interactionRestricted: Boolean = true
 ) {
 
-    var selectedGroupName by rememberSaveable {
-        mutableStateOf(TrafficGroup.INTERSECTIONS.name)
+    val colors = MaterialTheme.colorScheme
+
+    // While driving, complex interaction is unavailable.
+    if (interactionRestricted) {
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background)
+                .padding(24.dp),
+
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+
+            Text(
+                text = "Traffic Rules",
+                style = MaterialTheme.typography.headlineMedium
+            )
+
+            Text(
+                text = "Open this guide while safely parked.",
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
+
+        return
+    }
+
+    var selectedGroup by rememberSaveable {
+        mutableStateOf(ruleGroups.first())
     }
 
     var selectedRuleId by rememberSaveable {
         mutableStateOf("roundabout")
     }
 
-    var lastRequestedSpeech by rememberSaveable {
+    var lastSpeech by rememberSaveable {
         mutableStateOf("")
     }
 
-    var statusText by rememberSaveable {
-        mutableStateOf("Select a situation to begin.")
+    var uiMessage by rememberSaveable {
+        mutableStateOf("Choose a situation.")
     }
 
-    val selectedGroup =
-        TrafficGroup.values().firstOrNull {
-            it.name == selectedGroupName
-        } ?: TrafficGroup.INTERSECTIONS
-
-    val visibleRules = trafficRules.filter {
-        it.group == selectedGroup
+    val visible = rules.filter {
+        it.category == selectedGroup
     }
 
-    val selectedRule =
-        visibleRules.firstOrNull {
-            it.id == selectedRuleId
-        } ?: visibleRules.first()
+    val selected = visible.firstOrNull {
+        it.id == selectedRuleId
+    } ?: visible.first()
 
-    // 카테고리 변경
-    val selectGroup: (TrafficGroup) -> Unit = { group ->
+    // Category selection
+    val selectGroup: (String) -> Unit = { group ->
 
         if (group != selectedGroup) {
 
             onStopRequest()
 
-            selectedGroupName = group.name
+            selectedGroup = group
 
-            selectedRuleId =
-                trafficRules.first {
-                    it.group == group
-                }.id
+            selectedRuleId = rules.first {
+                it.category == group
+            }.id
 
-            lastRequestedSpeech = ""
+            lastSpeech = ""
 
-            statusText = "Category selected: ${group.title}"
+            uiMessage = "Category selected"
         }
     }
 
-    // 상황 선택
-    val selectRule: (String) -> Unit = { id ->
+    // Situation selection
+    val selectRule: (KDriveRule) -> Unit = { rule ->
 
-        if (id != selectedRuleId) {
+        if (rule.id != selectedRuleId) {
 
             onStopRequest()
 
-            selectedRuleId = id
-            lastRequestedSpeech = ""
+            selectedRuleId = rule.id
+            lastSpeech = ""
 
-            statusText = "Situation selected."
+            uiMessage = "Situation selected"
         }
     }
 
-    // 선택한 영어 안내 재생 요청
-    val playSelected: () -> Unit = {
+    // Play voice request
+    val play: () -> Unit = {
 
         onStopRequest()
 
-        lastRequestedSpeech = selectedRule.speech
+        lastSpeech = selected.speech
 
-        onSpeakRequest(selectedRule.speech)
+        onSpeakRequest(selected.speech)
 
-        statusText = "Voice playback requested."
+        uiMessage = "Voice requested"
     }
 
-    // 중지 요청
-    val stopSelected: () -> Unit = {
+    // Stop voice request
+    val stop: () -> Unit = {
 
         onStopRequest()
 
-        statusText = "Stop requested."
+        uiMessage = "Stop requested"
     }
 
-    // 마지막 문장 다시 요청
-    val replaySelected: () -> Unit = {
+    // Replay voice request
+    val replay: () -> Unit = {
 
-        if (lastRequestedSpeech.isNotBlank()) {
+        if (lastSpeech.isNotBlank()) {
 
             onStopRequest()
 
-            onSpeakRequest(lastRequestedSpeech)
+            onSpeakRequest(lastSpeech)
 
-            statusText = "Replay requested."
+            uiMessage = "Replay requested"
         }
     }
+
+    // ---------------------------------------
+    // Responsive Layout
+    // ---------------------------------------
 
     BoxWithConstraints(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
     ) {
 
-        val isLandscapeLayout = maxWidth >= 780.dp
+        val wide = maxWidth >= 670.dp
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(KDriveUiSize.padding),
 
-            verticalArrangement =
-                Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
 
-            // 상단 제목
+            // Header
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement =
-                    Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
 
-                TextButton(
+                KDriveActionButton(
+                    label = "Back",
                     onClick = {
                         onStopRequest()
                         onBack()
-                    }
-                ) {
-                    Text("Back")
-                }
+                    },
+                    filled = false
+                )
 
-                Column {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
 
                     Text(
-                        text = "Traffic Rules Guide",
-                        style =
-                            MaterialTheme.typography.headlineSmall
+                        text = "Traffic Rules",
+                        style = MaterialTheme.typography.headlineMedium
                     )
 
                     Text(
-                        text = "K-DRIVE GUIDE | 11 SITUATIONS",
-                        style =
-                            MaterialTheme.typography.labelSmall
+                        text = "Learn while parked - 11 situations",
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
 
-            HorizontalDivider()
+            // Category buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
 
-            if (isLandscapeLayout) {
+                ruleGroups.forEach { group ->
 
-                // ===================================
-                // Landscape: 3개 영역
-                // ===================================
+                    KDriveActionButton(
+                        label = group,
+                        onClick = {
+                            selectGroup(group)
+                        },
+                        modifier = Modifier.weight(1f),
+                        filled = selectedGroup == group
+                    )
+                }
+            }
 
+            if (wide) {
+
+                // Landscape: list on left, detail on right
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
 
-                    horizontalArrangement =
-                        Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
 
-                    // 왼쪽: 카테고리
-                    TrafficCategoryPanel(
-                        selectedGroup = selectedGroup,
-                        onSelectGroup = selectGroup,
+                    Column(
                         modifier = Modifier
-                            .width(185.dp)
+                            .weight(0.95f)
                             .fillMaxHeight()
-                            .verticalScroll(
-                                rememberScrollState()
-                            )
-                    )
+                            .verticalScroll(rememberScrollState()),
 
-                    // 중앙: 상황 목록
-                    TrafficRuleList(
-                        rules = visibleRules,
-                        selectedRuleId = selectedRule.id,
-                        onSelectRule = selectRule,
-                        modifier = Modifier
-                            .width(245.dp)
-                            .fillMaxHeight()
-                            .verticalScroll(
-                                rememberScrollState()
-                            )
-                    )
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
 
-                    // 오른쪽: 상세 안내
-                    TrafficRuleDetails(
-                        rule = selectedRule,
-                        statusText = statusText,
-                        replayEnabled =
-                            lastRequestedSpeech.isNotBlank(),
-                        onPlay = playSelected,
-                        onStop = stopSelected,
-                        onReplay = replaySelected,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .verticalScroll(
-                                rememberScrollState()
+                        visible.forEach { rule ->
+
+                            KDriveRuleCard(
+                                rule = rule,
+                                selected = rule.id == selected.id,
+                                onClick = {
+                                    selectRule(rule)
+                                }
                             )
-                    )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1.05f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+
+                        KDriveRuleDetail(
+                            rule = selected,
+                            status = uiMessage,
+                            canReplay = lastSpeech.isNotBlank(),
+                            onPlay = play,
+                            onStop = stop,
+                            onReplay = replay
+                        )
+                    }
                 }
 
             } else {
 
-                // ===================================
-                // Portrait: 세로 배치
-                // ===================================
-
+                // Portrait: vertical layout
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(
-                            rememberScrollState()
-                        ),
+                        .verticalScroll(rememberScrollState()),
 
-                    verticalArrangement =
-                        Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
 
-                    Text(
-                        text = "Choose a Category",
-                        style =
-                            MaterialTheme.typography.titleMedium
-                    )
+                    visible.forEach { rule ->
 
-                    TrafficCategoryChips(
-                        selectedGroup = selectedGroup,
-                        onSelectGroup = selectGroup
-                    )
-
-                    HorizontalDivider()
-
-                    TrafficRuleList(
-                        rules = visibleRules,
-                        selectedRuleId = selectedRule.id,
-                        onSelectRule = selectRule
-                    )
-
-                    HorizontalDivider()
-
-                    TrafficRuleDetails(
-                        rule = selectedRule,
-                        statusText = statusText,
-                        replayEnabled =
-                            lastRequestedSpeech.isNotBlank(),
-                        onPlay = playSelected,
-                        onStop = stopSelected,
-                        onReplay = replaySelected
-                    )
-                }
-            }
-        }
-    }
-}
-
-// -------------------------------------------------
-// 5. Landscape 카테고리 패널
-// -------------------------------------------------
-
-@Composable
-private fun TrafficCategoryPanel(
-    selectedGroup: TrafficGroup,
-    onSelectGroup: (TrafficGroup) -> Unit,
-    modifier: Modifier = Modifier
-) {
-
-    Column(
-        modifier = modifier,
-        verticalArrangement =
-            Arrangement.spacedBy(10.dp)
-    ) {
-
-        Text(
-            text = "Categories",
-            style = MaterialTheme.typography.titleMedium
-        )
-
-        TrafficGroup.values().forEach { group ->
-
-            val selected = group == selectedGroup
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onSelectGroup(group)
-                    },
-
-                colors = CardDefaults.cardColors(
-                    containerColor =
-                        if (selected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        }
-                )
-            ) {
-
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement =
-                        Arrangement.spacedBy(5.dp)
-                ) {
-
-                    Text(
-                        text = group.title,
-                        style =
-                            MaterialTheme.typography.titleSmall
-                    )
-
-                    Text(
-                        text = group.koreanTitle,
-                        style =
-                            MaterialTheme.typography.bodySmall
-                    )
-
-                    Text(
-                        text = "${trafficRules.count {
-                            it.group == group
-                        }} situations",
-                        style =
-                            MaterialTheme.typography.labelSmall
-                    )
-
-                    if (selected) {
-
-                        Text(
-                            text = "SELECTED",
-                            style =
-                                MaterialTheme.typography.labelSmall,
-                            color =
-                                MaterialTheme.colorScheme.primary
+                        KDriveRuleCard(
+                            rule = rule,
+                            selected = rule.id == selected.id,
+                            onClick = {
+                                selectRule(rule)
+                            }
                         )
                     }
+
+                    KDriveRuleDetail(
+                        rule = selected,
+                        status = uiMessage,
+                        canReplay = lastSpeech.isNotBlank(),
+                        onPlay = play,
+                        onStop = stop,
+                        onReplay = replay
+                    )
                 }
             }
         }
     }
 }
 
-// -------------------------------------------------
-// 6. Portrait 카테고리 선택
-// -------------------------------------------------
+// -------------------------------------------
+// Rule Card
+// -------------------------------------------
 
 @Composable
-private fun TrafficCategoryChips(
-    selectedGroup: TrafficGroup,
-    onSelectGroup: (TrafficGroup) -> Unit
+private fun KDriveRuleCard(
+    rule: KDriveRule,
+    selected: Boolean,
+    onClick: () -> Unit
 ) {
 
-    Row(
+    val colors = MaterialTheme.colorScheme
+
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(
-                rememberScrollState()
-            ),
+            .heightIn(min = KDriveUiSize.touchHeight)
+            .clickable(onClick = onClick),
 
-        horizontalArrangement =
-            Arrangement.spacedBy(8.dp)
-    ) {
+        shape = RoundedCornerShape(16.dp),
 
-        TrafficGroup.values().forEach { group ->
-
-            if (group == selectedGroup) {
-
-                Button(
-                    onClick = {
-                        onSelectGroup(group)
-                    }
-                ) {
-                    Text(group.title)
-                }
-
-            } else {
-
-                OutlinedButton(
-                    onClick = {
-                        onSelectGroup(group)
-                    }
-                ) {
-                    Text(group.title)
-                }
-            }
-        }
-    }
-}
-
-// -------------------------------------------------
-// 7. 선택한 카테고리의 상황 목록
-// -------------------------------------------------
-
-@Composable
-private fun TrafficRuleList(
-    rules: List<TrafficRuleItem>,
-    selectedRuleId: String,
-    onSelectRule: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-
-    Column(
-        modifier = modifier,
-        verticalArrangement =
-            Arrangement.spacedBy(8.dp)
-    ) {
-
-        Text(
-            text = "Driving Situations",
-            style = MaterialTheme.typography.titleMedium
+        colors = CardDefaults.cardColors(
+            containerColor =
+                if (selected) colors.primaryContainer
+                else colors.surface
         )
+    ) {
 
-        rules.forEach { rule ->
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
 
-            val selected = rule.id == selectedRuleId
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onSelectRule(rule.id)
-                    },
+            Text(
+                text = rule.title,
+                style = MaterialTheme.typography.titleMedium,
+                color =
+                    if (selected) colors.primary
+                    else colors.onSurface,
+                maxLines = 2
+            )
 
-                colors = CardDefaults.cardColors(
-                    containerColor =
-                        if (selected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        }
-                )
-            ) {
-
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement =
-                        Arrangement.spacedBy(4.dp)
-                ) {
-
-                    Text(
-                        text = rule.title,
-                        style =
-                            MaterialTheme.typography.titleSmall
-                    )
-
-                    Text(
-                        text = rule.koreanTitle,
-                        style =
-                            MaterialTheme.typography.bodySmall
-                    )
-
-                    if (selected) {
-
-                        Text(
-                            text = "SELECTED",
-                            color =
-                                MaterialTheme.colorScheme.primary,
-                            style =
-                                MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
-            }
+            Text(
+                text = rule.korean,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1
+            )
         }
     }
 }
 
-// -------------------------------------------------
-// 8. 상세 설명 및 영어 음성 요청
-// -------------------------------------------------
+// -------------------------------------------
+// Rule Details and Voice Controls
+// -------------------------------------------
 
 @Composable
-private fun TrafficRuleDetails(
-    rule: TrafficRuleItem,
-    statusText: String,
-    replayEnabled: Boolean,
+private fun KDriveRuleDetail(
+    rule: KDriveRule,
+    status: String,
+    canReplay: Boolean,
     onPlay: () -> Unit,
     onStop: () -> Unit,
-    onReplay: () -> Unit,
-    modifier: Modifier = Modifier
+    onReplay: () -> Unit
 ) {
 
     Column(
-        modifier = modifier,
-        verticalArrangement =
-            Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
 
         Text(
             text = rule.title,
-            style = MaterialTheme.typography.headlineSmall
-        )
-
-        Text(
-            text = rule.koreanTitle,
-            style = MaterialTheme.typography.bodyMedium
-        )
-
-        Text(
-            text = rule.description,
-            style = MaterialTheme.typography.bodyLarge
-        )
-
-        HorizontalDivider()
-
-        Text(
-            text = "English Voice Guidance",
-            style = MaterialTheme.typography.titleMedium
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 2
         )
 
         Card(
-            modifier = Modifier.fillMaxWidth()
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
         ) {
 
-            Text(
-                text = rule.speech,
-                modifier = Modifier.padding(16.dp),
-                style = MaterialTheme.typography.bodyMedium
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+
+                Text(
+                    text = "KEY POINT",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Text(
+                    text = rule.summary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = "VOICE SCRIPT",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Text(
+                    text = rule.speech,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Row(
+            horizontalArrangement =
+                Arrangement.spacedBy(KDriveUiSize.actionGap)
+        ) {
+
+            KDriveActionButton(
+                label = "Play",
+                onClick = onPlay,
+                modifier = Modifier.weight(1f)
+            )
+
+            KDriveActionButton(
+                label = "Stop",
+                onClick = onStop,
+                modifier = Modifier.weight(1f),
+                filled = false
             )
         }
 
-        // Play / Stop
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-
-            horizontalArrangement =
-                Arrangement.spacedBy(8.dp)
-        ) {
-
-            Button(
-                onClick = onPlay,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Play Voice")
-            }
-
-            OutlinedButton(
-                onClick = onStop,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Stop")
-            }
-        }
-
-        // Replay
-        OutlinedButton(
+        KDriveActionButton(
+            label = "Replay",
             onClick = onReplay,
-            enabled = replayEnabled,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Replay Last Message")
-        }
-
-        Text(
-            text = statusText,
-            style = MaterialTheme.typography.bodySmall
-        )
-
-        HorizontalDivider()
-
-        Text(
-            text = "For learning before driving or " +
-                    "while safely parked.",
-            style = MaterialTheme.typography.labelMedium
+            modifier = Modifier.fillMaxWidth(),
+            filled = false,
+            enabled = canReplay
         )
 
         Text(
-            text = "Prototype guidance. Final traffic-rule " +
-                    "verification is required before release.",
-            style = MaterialTheme.typography.labelSmall,
-            color =
-                MaterialTheme.colorScheme.onSurfaceVariant
+            text = status,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2
         )
     }
 }
 
-// -------------------------------------------------
-// 9. Landscape Preview
-// -------------------------------------------------
+// -------------------------------------------
+// Landscape Preview
+// -------------------------------------------
 
 @Preview(
-    name = "K-DRIVE Traffic Rules Landscape",
-    showBackground = true,
+    name = "Traffic - Landscape parked",
     widthDp = 1000,
-    heightDp = 600
+    heightDp = 600,
+    showBackground = true
 )
 @Composable
-private fun TrafficRulesLandscapePreview() {
+private fun KDriveRulesLandscapePreview() {
 
-    MaterialTheme {
+    KDriveTheme(KDRIVE_THEME_PRESETS[0]) {
 
         TrafficRulesScreen(
             onBack = {},
             onSpeakRequest = {},
-            onStopRequest = {}
+            onStopRequest = {},
+            interactionRestricted = false
         )
     }
 }
 
-// -------------------------------------------------
-// 10. Portrait Preview
-// -------------------------------------------------
+// -------------------------------------------
+// Portrait Preview
+// -------------------------------------------
 
 @Preview(
-    name = "K-DRIVE Traffic Rules Portrait",
-    showBackground = true,
+    name = "Traffic - Portrait parked",
     widthDp = 400,
-    heightDp = 800
+    heightDp = 800,
+    showBackground = true
 )
 @Composable
-private fun TrafficRulesPortraitPreview() {
+private fun KDriveRulesPortraitPreview() {
 
-    MaterialTheme {
+    KDriveTheme(KDRIVE_THEME_PRESETS[0]) {
 
         TrafficRulesScreen(
             onBack = {},
             onSpeakRequest = {},
-            onStopRequest = {}
+            onStopRequest = {},
+            interactionRestricted = false
         )
     }
 }
