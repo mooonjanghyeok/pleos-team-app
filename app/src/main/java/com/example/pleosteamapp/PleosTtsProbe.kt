@@ -15,18 +15,23 @@ class PleosTtsProbe(context: Context) {
 
     private val tag = "PLEOS_TTS_TEST"
 
-    // 1. TTS 객체 생성
     private val tts = TextToSpeech(
         context.applicationContext,
         Mode.ON_DEVICE
     )
 
-    // 2. TTS 상태 저장
+    @Volatile
     private var initialized = false
-    private var listenerRegistered = false
+
+    @Volatile
     private var released = false
 
-    // 3. TTS 이벤트 리스너
+    private var startRequested = false
+    private var listenerRegistered = false
+
+    @Volatile
+    private var pendingText: String? = null
+
     private val eventListener = object : EventListener {
 
         override fun onReady() {
@@ -38,7 +43,7 @@ class PleosTtsProbe(context: Context) {
         }
 
         override fun onUpdatedRms(rms: Double) {
-            // 음성 출력 레벨
+            // 음성 출력 상태
         }
 
         override fun onDone() {
@@ -54,53 +59,94 @@ class PleosTtsProbe(context: Context) {
         }
     }
 
-    // 4. TTS 초기화
+    // TTS 초기화
     fun start() {
 
-        if (released) return
+        if (released || initialized || startRequested) return
 
+        startRequested = true
         Log.d(tag, "INITIALIZING TTS")
 
-        tts.initialize(object : OnInitializeListener {
+        try {
+            tts.initialize(object : OnInitializeListener {
 
-            override fun onSuccess() {
+                override fun onSuccess() {
 
-                if (released) return
+                    if (released) return
 
-                initialized = true
+                    try {
+                        if (!listenerRegistered) {
+                            tts.addEventListener(eventListener)
+                            listenerRegistered = true
+                        }
 
-                Log.d(tag, "INITIALIZE SUCCESS")
+                        tts.setLocale(Locale.US)
+                        initialized = true
 
-                // 이벤트 리스너 등록
-                tts.addEventListener(eventListener)
-                listenerRegistered = true
+                        Log.d(tag, "INITIALIZE SUCCESS")
+                        Log.d(tag, "ENGLISH SET")
 
-                // 영어 설정
-                tts.setLocale(Locale.US)
+                        val waitingText = pendingText
+                        pendingText = null
 
-                Log.d(tag, "ENGLISH SET")
-            }
+                        if (!waitingText.isNullOrBlank()) {
+                            speakText(waitingText)
+                        }
 
-            override fun onFailure(errorType: ErrorType) {
-                Log.e(
-                    tag,
-                    "INITIALIZE FAILED: $errorType"
-                )
-            }
-        })
+                    } catch (error: Exception) {
+                        Log.e(tag, "TTS SETUP FAILED", error)
+                    }
+                }
+
+                override fun onFailure(errorType: ErrorType) {
+                    startRequested = false
+                    Log.e(
+                        tag,
+                        "INITIALIZE FAILED: $errorType"
+                    )
+                }
+            })
+
+        } catch (error: Exception) {
+            startRequested = false
+            Log.e(tag, "TTS INITIALIZATION ERROR", error)
+        }
     }
 
-    // 5. 영어 음성 재생
-    fun speakEnglish() {
+    // 원하는 영어 문장 재생
+    fun speakText(text: String) {
 
-        if (!initialized || released) {
-            Log.w(tag, "TTS NOT INITIALIZED")
+        if (released) {
+            Log.w(tag, "TTS ALREADY RELEASED")
             return
         }
 
-        Log.d(tag, "SPEAK REQUEST")
+        val message = text.trim()
 
-        tts.speak(
+        if (message.isEmpty()) {
+            Log.w(tag, "EMPTY SPEECH TEXT")
+            return
+        }
+
+        if (!initialized) {
+            pendingText = message
+            Log.w(tag, "TTS NOT READY - MESSAGE SAVED")
+            return
+        }
+
+        try {
+            Log.d(tag, "SPEAK TEXT: $message")
+            tts.speak(message)
+
+        } catch (error: Exception) {
+            Log.e(tag, "SPEAK FAILED", error)
+        }
+    }
+
+    // 기존 테스트 버튼 호환
+    fun speakEnglish() {
+
+        speakText(
             "Welcome to Korea. " +
                     "This is your driving assistant. " +
                     "You are approaching a roundabout. " +
@@ -111,36 +157,46 @@ class PleosTtsProbe(context: Context) {
         )
     }
 
-    // 6. 영어 음성 중지
+    // 음성 중지
     fun stopSpeech() {
 
-        if (!initialized || released) {
-            Log.w(tag, "TTS NOT INITIALIZED")
-            return
+        pendingText = null
+
+        if (released || !initialized) return
+
+        try {
+            Log.d(tag, "STOP REQUEST")
+            tts.stop()
+
+        } catch (error: Exception) {
+            Log.e(tag, "STOP FAILED", error)
         }
-
-        Log.d(tag, "STOP REQUEST")
-
-        tts.stop()
     }
 
-    // 7. SDK 종료 및 자원 정리
+    // SDK 리소스 정리
     fun release() {
 
         if (released) return
 
         released = true
         initialized = false
+        pendingText = null
 
         try {
             if (listenerRegistered) {
                 tts.removeEventListener(eventListener)
                 listenerRegistered = false
             }
-        } finally {
-            tts.release()
+        } catch (error: Exception) {
+            Log.w(tag, "LISTENER REMOVE FAILED", error)
         }
 
-        Log.d(tag, "TTS RELEASED")
+        try {
+            tts.release()
+            Log.d(tag, "TTS RELEASED")
+
+        } catch (error: Exception) {
+            Log.e(tag, "TTS RELEASE FAILED", error)
+        }
     }
 }
