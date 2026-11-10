@@ -388,6 +388,9 @@ class KDriveSituationActivity : ComponentActivity() {
     private var lastVoice by mutableStateOf("아직 안내 없음")
 
     private var demoRunning by mutableStateOf(false)
+
+    // KDRIVE_DEMO_TTS_SYNC_HANDLER_V1
+    private var demoDistanceHeldForVoice = false
     private var demoIndex = 0
     private var demoDistance = 1500
     private var demoAnnounced = false
@@ -786,6 +789,38 @@ class KDriveSituationActivity : ComponentActivity() {
         override fun run() {
             if (!demoRunning || closed) return
 
+            // DEMO only: pause synthetic approach while speech is active.
+            // Real navigation distance is not modified.
+            val demoVoiceBusy =
+                voiceQueue.hasSource("DEMO") ||
+                voiceQueue.hasSource("UI")
+
+            if (demoVoiceBusy) {
+                if (!demoDistanceHeldForVoice) {
+                    demoDistanceHeldForVoice = true
+                    Log.d(
+                        TAG,
+                        "DEMO_DISTANCE_HOLD_TTS index=$demoIndex distance=$demoDistance"
+                    )
+                }
+
+                handler.postDelayed(this, 150L)
+                return
+            }
+
+            if (demoDistanceHeldForVoice) {
+                demoDistanceHeldForVoice = false
+
+                Log.d(
+                    TAG,
+                    "DEMO_DISTANCE_RESUME_TTS index=$demoIndex distance=$demoDistance"
+                )
+
+                // Brief gap after speech, then resume synthetic movement.
+                handler.postDelayed(this, 600L)
+                return
+            }
+
             val cue = demoQueue.getOrNull(demoIndex)
             if (cue == null) {
                 stopDemo()
@@ -876,6 +911,7 @@ class KDriveSituationActivity : ComponentActivity() {
     }
 
     private fun stopDemo() {
+        demoDistanceHeldForVoice = false
         demoFinishPending = false
         demoAudioInProgress = false
         handler.removeCallbacks(demoFinishWatchdog)
