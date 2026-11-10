@@ -39,6 +39,27 @@ import java.util.Locale
 
 class KDriveGuideActivity : ComponentActivity() {
 
+    private val kdriveNavPriorityGate by lazy {
+        KDriveNavPriorityGate(
+            applicationContext,
+            log = { message ->
+                android.util.Log.d("KDRIVE_AUDIO_GATE", message)
+            },
+            stopOurTts = {
+                try {
+                    tts?.stop()
+                } catch (e: Exception) {
+                    android.util.Log.e(
+                        "KDRIVE_AUDIO_GATE",
+                        "TTS_STOP_FAILED",
+                        e
+                    )
+                }
+            }
+        )
+    }
+
+
     companion object {
         private const val TAG = "KDRIVE_UNIFIED"
 
@@ -455,6 +476,15 @@ class KDriveGuideActivity : ComponentActivity() {
     }
 
     private fun speakEnglish(message: String): Boolean {
+
+        if (!kdriveNavPriorityGate.maySpeak()) {
+            android.util.Log.w(
+                "KDRIVE_AUDIO_GATE",
+                "GUIDANCE_BLOCKED_BY_NAV_AUDIO"
+            )
+            return false
+        }
+
         if (!ttsReady || destroyed) return false
 
         val speech = tts ?: return false
@@ -835,6 +865,8 @@ class KDriveGuideActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        kdriveNavPriorityGate.start()
+
         setContent {
             MaterialTheme {
                 Column(
@@ -846,6 +878,17 @@ class KDriveGuideActivity : ComponentActivity() {
                     verticalArrangement =
                         Arrangement.spacedBy(12.dp)
                 ) {
+                    // KDRIVE_SITUATION_ENTRY_V1
+                    Button(onClick = {
+                        startActivity(
+                            android.content.Intent(
+                                this@KDriveGuideActivity,
+                                KDriveSituationActivity::class.java
+                            )
+                        )
+                    }) {
+                        Text("상황별 안내 화면 열기")
+                    }
                     Text(
                         "K-DRIVE GUIDE",
                         style =
@@ -1102,6 +1145,8 @@ class KDriveGuideActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+
+        kdriveNavPriorityGate.close()
         destroyed = true
 
         stopDemo()
