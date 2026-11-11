@@ -34,7 +34,8 @@ data class DoorUiState(
 fun VehicleDoorScreen(
     state: DoorUiState,
     onConnect: () -> Unit,
-    onRead: () -> Unit
+    onRead: () -> Unit,
+    onOpenNavi: () -> Unit = {}
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -88,6 +89,17 @@ fun VehicleDoorScreen(
                 )
             ) {
                 Text("② 문 상태 조회")
+            }
+
+            Button(
+                onClick = onOpenNavi,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF475569),
+                    contentColor = Color.White
+                )
+            ) {
+                Text("③ 내비 목적지 테스트")
             }
 
             if (state.busy) {

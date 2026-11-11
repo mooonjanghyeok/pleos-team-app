@@ -17,7 +17,7 @@ import com.example.pleosteamapp.ui.theme.PleosTeamAppTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
+import android.content.Intent
 class MainActivity : ComponentActivity() {
 
     private var screenState by mutableStateOf(DoorUiState())
@@ -42,7 +42,15 @@ class MainActivity : ComponentActivity() {
                 VehicleDoorScreen(
                     state = screenState,
                     onConnect = { connectAndCheckSupport() },
-                    onRead = { readDoorPosition() }
+                    onRead = { readDoorPosition() },
+                    onOpenNavi = {
+                        startActivity(
+                            Intent(
+                                this@MainActivity,
+                                NaviDestinationActivity::class.java
+                            )
+                        )
+                    }
                 )
             }
         }
