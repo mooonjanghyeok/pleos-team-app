@@ -145,6 +145,283 @@ private data class SituationCard(
 
 class KDriveSituationActivity : ComponentActivity() {
 
+    // KDRIVE_USER_SHOWCASE_V1
+    // Two independent demonstration chapters, not a full-route replay.
+    // SDK candidate names may be used, but approach is ALWAYS simulated.
+    private fun buildUserShowcase(): List<DetectedCue> {
+        return listOf("toll", "roundabout").map { id ->
+            val found = realCues.firstOrNull {
+                it.situationId == id
+            }
+
+            val origin = if (found != null) {
+                "SDK_TBT_CANDIDATE"
+            } else {
+                "SAMPLE"
+            }
+
+            val sampleName = if (id == "toll") {
+                "Tollgate"
+            } else {
+                "Roundabout"
+            }
+
+            val place = if (found != null) {
+                "[TBT] ${found.place}"
+            } else {
+                "[SAMPLE] $sampleName"
+            }
+
+            Log.d(
+                TAG,
+                "SHOWCASE_CUE id=$id origin=$origin " +
+                    "approach=SIMULATED place=$place"
+            )
+
+            DetectedCue(
+                key = "showcase|$id|${found?.key ?: "sample"}",
+                situationId = id,
+                place = place,
+                rawDistance = null
+            )
+        }
+    }
+
+    private fun userShowcaseText(
+        id: String,
+        localeTag: String,
+        country: String
+    ): String? {
+        val card = activeCard
+
+        // Keep existing manual learning content unchanged.
+        if (card?.source != "DEMO" || card.situationId != id) {
+            return KDriveExtraContent.forSituation(
+                id, localeTag, country
+            )
+        }
+
+        val lang = localeTag
+            .replace('_', '-')
+            .substringBefore('-')
+            .lowercase(Locale.ROOT)
+
+        // Short DEMO reminders, not real-time permission decisions.
+        // Basis: VISITKOREA driving guide and MOIS roundabout guide.
+        val message = when (id) {
+            "toll" -> when (lang) {
+                "en" ->
+                    "Hi-Pass is electronic toll payment. " +
+                    "Use its lanes only after confirming your " +
+                    "rental car's device and payment setup."
+
+                "ko" ->
+                    "하이패스는 전자 통행료 결제 방식입니다. " +
+                    "렌터카의 단말기와 결제 설정을 확인한 " +
+                    "경우에만 해당 차로를 이용하세요."
+
+                "fr" ->
+                    "Hi-Pass est un paiement électronique de péage. " +
+                    "Avant d'utiliser ces voies, vérifiez le boîtier " +
+                    "et le moyen de paiement de votre voiture de location."
+
+                "es" ->
+                    "Hi-Pass es un sistema de pago electrónico de peajes. " +
+                    "Antes de usar sus carriles, confirme el dispositivo " +
+                    "y el medio de pago de su coche de alquiler."
+
+                else -> null
+            }
+
+            "roundabout" -> when (lang) {
+                "en" ->
+                    "In Korea, roundabouts run counterclockwise. " +
+                    "Slow down and yield to vehicles already circulating."
+
+                "ko" ->
+                    "한국 회전교차로는 반시계 방향입니다. " +
+                    "진입 전 서행하고 회전 중인 차량에 양보하세요."
+
+                "fr" ->
+                    "En Corée, les giratoires se parcourent dans " +
+                    "le sens antihoraire. Ralentissez et cédez le " +
+                    "passage aux véhicules déjà engagés."
+
+                "es" ->
+                    "En Corea, las glorietas se recorren en sentido " +
+                    "antihorario. Reduzca la velocidad y ceda el paso " +
+                    "a los vehículos que ya circulan."
+
+                else -> null
+            }
+
+            else -> null
+        }
+
+        return message ?: KDriveExtraContent.forSituation(
+            id, localeTag, country
+        )
+    }
+
+
+    // KDRIVE_NAVI_AUDIT_PROXY_V1
+    // DEBUG ONLY: observe the SDK without enabling live voice.
+    private val naviAuditEventNames = setOf(
+        "onCurrentLocationInfo",
+        "onDrivingInfo",
+        "onRouteStateInfo",
+        "onNavigationStatus",
+        "onCautionPointInfo",
+        "onDestinationInfo",
+        "onDestinationArrived",
+        "onTripInfo",
+        "onCameraAlert"
+    )
+
+    private val naviAuditLastValues =
+        java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
+
+    private val naviAuditApiMessages = mutableSetOf<String>()
+    private var naviAuditRemainingPolls = 0
+
+    // A proxy forwards events to the existing listener exactly once.
+    // No guessed SDK callback parameter types are needed.
+    private val naviAuditListener: NaviHelperEventListener by lazy {
+        java.lang.reflect.Proxy.newProxyInstance(
+            NaviHelperEventListener::class.java.classLoader,
+            arrayOf(NaviHelperEventListener::class.java),
+            java.lang.reflect.InvocationHandler { proxy, method, args ->
+                when (method.name) {
+                    "equals" -> proxy === args?.getOrNull(0)
+                    "hashCode" -> System.identityHashCode(proxy)
+                    "toString" -> "KDriveNaviAuditListener"
+
+                    else -> {
+                        if (method.name in naviAuditEventNames) {
+                            val payload = args?.joinToString(" | ") { item ->
+                                when (item) {
+                                    is List<*> ->
+                                        "count=${item.size} first=${item.take(3)}"
+                                    null -> "null"
+                                    else -> item.toString()
+                                }
+                            }?.replace('\n', ' ')?.take(500) ?: "no args"
+
+                            val now =
+                                android.os.SystemClock.elapsedRealtime()
+
+                            val previous =
+                                naviAuditLastValues[method.name]
+
+                            if (
+                                previous == null ||
+                                previous.second != payload ||
+                                now - previous.first >= 10000L
+                            ) {
+                                naviAuditLastValues[method.name] =
+                                    now to payload
+
+                                Log.d(
+                                    TAG,
+                                    "NAV_AUDIT_EVENT " +
+                                        "callback=${method.name} " +
+                                        "value=$payload"
+                                )
+                            }
+                        }
+
+                        // Forward original route/TBT callbacks unchanged.
+                        try {
+                            method.invoke(
+                                naviListener,
+                                *(args ?: emptyArray<Any?>())
+                            )
+                        } catch (
+                            error: java.lang.reflect.InvocationTargetException
+                        ) {
+                            throw (error.targetException ?: error)
+                        }
+                    }
+                }
+            }
+        ) as NaviHelperEventListener
+    }
+
+    // Information queries are selected from the installed SDK itself.
+    private fun requestNaviAuditSnapshot() {
+        val helper = navi ?: return
+
+        val queryNames = listOf(
+            "getCurrentLocationInfo",
+            "getDrivingInfo",
+            "getRouteStateInfo",
+            "getNavigationStatus",
+            "getCautionPointInfo",
+            "getDestinationInfo",
+            "getTripInfo"
+        )
+
+        val sdkMethods = helper.javaClass.methods
+
+        for (name in queryNames) {
+            val method = sdkMethods.firstOrNull {
+                it.name == name && it.parameterCount == 0
+            }
+
+            if (method == null) {
+                if (naviAuditApiMessages.add("MISSING:$name")) {
+                    Log.d(
+                        TAG,
+                        "NAV_AUDIT_API_UNAVAILABLE name=$name"
+                    )
+                }
+                continue
+            }
+
+            try {
+                method.invoke(helper)
+
+                if (naviAuditApiMessages.add("REQUESTED:$name")) {
+                    Log.d(
+                        TAG,
+                        "NAV_AUDIT_API_REQUESTED name=$name"
+                    )
+                }
+            } catch (error: Exception) {
+                if (naviAuditApiMessages.add("ERROR:$name")) {
+                    Log.w(
+                        TAG,
+                        "NAV_AUDIT_API_ERROR name=$name " +
+                            "reason=${error.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    private val naviAuditPollTask = object : Runnable {
+        override fun run() {
+            if (closed || naviAuditRemainingPolls <= 0) {
+                Log.d(TAG, "NAV_AUDIT_POLL_COMPLETE")
+                return
+            }
+
+            naviAuditRemainingPolls--
+
+            requestNaviAuditSnapshot()
+
+            handler.postDelayed(this, 5000L)
+        }
+    }
+
+
+    // KDRIVE_REAL_TBT_AUDIT_V1
+    // Debug observation only. Never triggers automatic speech.
+    private var tbtAuditSequence = 0
+    private var tbtAuditLastPrintMs = 0L
+    private var tbtAuditPrevious: Map<String, Double> = emptyMap()
+
+
     // KDRIVE_NAV_MUTE_FIX_V1
     // Only PC1 voice state is changed here.
     private var demoVoiceMuted by mutableStateOf(false)
@@ -280,9 +557,18 @@ class KDriveSituationActivity : ComponentActivity() {
     @Volatile
     private var routeAcceptingTbt = true
 
+    // KDRIVE_ROUTE_REACCEPT_V2
+    // Only permits TBT candidate recovery, never live speech.
+    @Volatile
+    private var routeStartAllowsSameSignature = false
+
     private var lastSpeechSource: String? = null
 
     private fun resetSituationSession(reason: String) {
+        tbtAuditPrevious = emptyMap()
+        tbtAuditSequence = 0
+        tbtAuditLastPrintMs = 0L
+        Log.d(TAG, "TBT_AUDIT_ROUTE_RESET reason=$reason")
         stopDemo()
 
         try {
@@ -294,6 +580,7 @@ class KDriveSituationActivity : ComponentActivity() {
         lastSpeechSource = null
         lastVoice = ""
         realCues = emptyList()
+        showRouteTips = false
         activeCard = null
         demoQueue = emptyList()
         demoIndex = 0
@@ -310,6 +597,11 @@ class KDriveSituationActivity : ComponentActivity() {
     private var showPc2Ui by mutableStateOf(true)
     // KDRIVE_PERSONAL_GUIDE_V1
     private var showTripPrep by mutableStateOf(false)
+
+    // KDRIVE_PRETRIP_ROUTE_V1
+    private var showRouteTips by mutableStateOf(false)
+    private var routeTipTollPlace by mutableStateOf<String?>(null)
+    private var routeTipRoundaboutPlace by mutableStateOf<String?>(null)
     private var drivingCountry by mutableStateOf("OTHER")
     private var debugParkedPreview by mutableStateOf(false)
     private var lastVoiceLocale = "en-US"
@@ -427,7 +719,7 @@ class KDriveSituationActivity : ComponentActivity() {
         }
 
         val item = SituationContent.find(id) ?: return
-        val message = KDriveExtraContent.forSituation(id, language, drivingCountry)
+        val message = userShowcaseText(id, language, drivingCountry)
             ?: item.message(language)
 
         if (message.isNullOrBlank()) {
@@ -556,10 +848,23 @@ class KDriveSituationActivity : ComponentActivity() {
 
                 rememberPreviousRoute()
                 resetSituationSession("ROUTE_STARTED")
+                routeStartAllowsSameSignature = true
+                Log.d(TAG, "ROUTE_NEW_START_ACCEPTS_CANDIDATES")
                 routeAcceptingTbt = false
 
                 naviStatus = "새 경로 탐색 중"
                 Log.d(TAG, "ROUTE_SEARCH_STARTED")
+
+                handler.postDelayed({
+                    if (
+                        !closed &&
+                        !routeAcceptingTbt &&
+                        routeStartAllowsSameSignature
+                    ) {
+                        Log.d(TAG, "ROUTE_NEW_CANDIDATE_PROBE")
+                        requestTbt()
+                    }
+                }, 1200L)
             }
         }
 
@@ -574,6 +879,7 @@ class KDriveSituationActivity : ComponentActivity() {
                 if (!closed) {
                     rememberPreviousRoute()
                     resetSituationSession("DESTINATION_CHANGED")
+                    routeStartAllowsSameSignature = false
                     routeAcceptingTbt = false
                     Log.d(TAG, "DESTINATION_CHANGE_AWAITING_ROUTE")
                     requestTbt()
@@ -586,6 +892,7 @@ class KDriveSituationActivity : ComponentActivity() {
                 if (!closed) {
                     rememberPreviousRoute()
                     resetSituationSession("ROUTE_CANCELLED")
+                    routeStartAllowsSameSignature = false
                     routeAcceptingTbt = false
                     naviStatus = "경로 취소됨"
                     if (activeCard?.source == "REAL") activeCard = null
@@ -605,8 +912,10 @@ class KDriveSituationActivity : ComponentActivity() {
 
                     if (
                         tbtInfoList.isEmpty() ||
-                        old.isNullOrBlank() ||
-                        signature == old
+                        (
+                            !routeStartAllowsSameSignature &&
+                            (old.isNullOrBlank() || signature == old)
+                        )
                     ) {
                         Log.d(
                             TAG,
@@ -636,6 +945,7 @@ class KDriveSituationActivity : ComponentActivity() {
                         )
 
                         routeAcceptingTbt = true
+                        routeStartAllowsSameSignature = false
                         pendingTbtSignature = null
                         pendingTbtCount = 0
 
@@ -696,6 +1006,114 @@ class KDriveSituationActivity : ComponentActivity() {
 
                 Log.d(TAG, "REAL_TBT total=${tbtInfoList.size} matched=${cues.size}")
 
+                // KDRIVE_REAL_TBT_AUDIT_CALLBACK_V1
+                // Compare identical position/type/description candidates.
+                // Distance semantics are NOT assumed to be live proximity.
+                val auditNow = android.os.SystemClock.elapsedRealtime()
+
+                val auditPoints = tbtInfoList.mapIndexed { index, point ->
+                    val key =
+                        "$index|${point.type}|${point.description}"
+
+                    Triple(
+                        key,
+                        point.distance.toString().toDoubleOrNull(),
+                        point
+                    )
+                }
+
+                val auditNext = auditPoints.mapNotNull { entry ->
+                    entry.second?.let { meters ->
+                        entry.first to meters
+                    }
+                }.toMap()
+
+                val auditChanged = auditNext.count { (key, meters) ->
+                    val old = tbtAuditPrevious[key]
+                    old != null &&
+                        kotlin.math.abs(meters - old) >= 1.0
+                }
+
+                val auditDecreased = auditNext.count { (key, meters) ->
+                    val old = tbtAuditPrevious[key]
+                    old != null && meters < old - 1.0
+                }
+
+                val auditIncreased = auditNext.count { (key, meters) ->
+                    val old = tbtAuditPrevious[key]
+                    old != null && meters > old + 1.0
+                }
+
+                val auditPrint =
+                    tbtAuditSequence == 0 ||
+                    auditChanged > 0 ||
+                    auditNow - tbtAuditLastPrintMs >= 10000L
+
+                if (auditPrint) {
+                    tbtAuditSequence += 1
+                    tbtAuditLastPrintMs = auditNow
+
+                    Log.d(
+                        TAG,
+                        "TBT_AUDIT_SUMMARY " +
+                            "seq=$tbtAuditSequence " +
+                            "total=${tbtInfoList.size} " +
+                            "matched=${cues.size} " +
+                            "changed=$auditChanged " +
+                            "decreased=$auditDecreased " +
+                            "increased=$auditIncreased"
+                    )
+
+                    tbtInfoList.forEachIndexed { index, point ->
+                        val key =
+                            "$index|${point.type}|${point.description}"
+
+                        val current =
+                            point.distance.toString().toDoubleOrNull()
+
+                        val previous = tbtAuditPrevious[key]
+
+                        val delta = if (
+                            current != null && previous != null
+                        ) {
+                            current - previous
+                        } else {
+                            null
+                        }
+
+                        val changed = delta != null &&
+                            kotlin.math.abs(delta) >= 1.0
+
+                        // First snapshot: every item.
+                        // Later snapshots: changed items and first four.
+                        if (
+                            tbtAuditSequence == 1 ||
+                            changed ||
+                            index < 4
+                        ) {
+                            val description = point.description
+                                .toString()
+                                .replace('\n', ' ')
+                                .replace('\r', ' ')
+                                .replace("|", "/")
+                                .take(75)
+
+                            Log.d(
+                                TAG,
+                                "TBT_AUDIT_ROW " +
+                                    "seq=$tbtAuditSequence " +
+                                    "idx=$index " +
+                                    "type=${point.type} " +
+                                    "distance=${point.distance} " +
+                                    "delta=$delta " +
+                                    "desc=$description"
+                            )
+                        }
+                    }
+                }
+
+                tbtAuditPrevious = auditNext
+
                 // 경로에 지점이 있다는 사실만 표시합니다.
                 // rawDistance의 실제 접근거리 의미가 검증되기 전에는
                 // 이를 이용하여 자동 음성을 실행하지 않습니다.
@@ -721,8 +1139,23 @@ class KDriveSituationActivity : ComponentActivity() {
                     runOnUiThread {
                         if (closed) return@runOnUiThread
                         try {
-                            helper.addListener(naviListener)
+                            if (!naviListenerAdded) {
+                                helper.addListener(
+                                    if (isDebugBuild()) naviAuditListener
+                                    else naviListener
+                                )
+                            }
                             naviListenerAdded = true
+
+                            if (isDebugBuild()) {
+                                naviAuditRemainingPolls = 72
+                                handler.removeCallbacks(naviAuditPollTask)
+                                handler.postDelayed(
+                                    naviAuditPollTask,
+                                    1000L
+                                )
+                                Log.d(TAG, "NAV_AUDIT_STARTED")
+                            }
                             naviStatus = "NaviHelper 연결됨"
                             requestTbt()
                         } catch (e: Exception) {
@@ -881,15 +1314,7 @@ class KDriveSituationActivity : ComponentActivity() {
         Log.d(TAG, "DEMO_VOICE_UNMUTED_ON_START")
         spokenDemoCueKeys.clear()
 
-        demoQueue = if (realCues.isNotEmpty()) {
-            realCues.take(3)
-        } else {
-            listOf(
-                DetectedCue("demo-roundabout", "roundabout", "Sample Roundabout", null),
-                DetectedCue("demo-toll", "toll", "Sample Toll Gate", null),
-                DetectedCue("demo-rest", "rest", "Sample Rest Area", null)
-            )
-        }
+        demoQueue = buildUserShowcase()
 
         if (demoQueue.isEmpty()) return
 
@@ -951,7 +1376,22 @@ class KDriveSituationActivity : ComponentActivity() {
         initializeNavi()
 
         setContent {
-            if (showTripPrep) {
+            if (showRouteTips) {
+                MaterialTheme {
+                    KDriveRouteTipsPreview(
+                        tollCandidate = routeTipTollPlace,
+                        roundaboutCandidate = routeTipRoundaboutPlace,
+                        selectedLocale = language,
+                        onOpenLearning = {
+                            showRouteTips = false
+                            showTripPrep = true
+                        },
+                        onBack = {
+                            showRouteTips = false
+                        }
+                    )
+                }
+            } else if (showTripPrep) {
                 MaterialTheme {
                     KDrivePersonalGuideScreen(
                         selectedCountry = drivingCountry,
@@ -992,7 +1432,7 @@ class KDriveSituationActivity : ComponentActivity() {
                         KDriveUiDataSource.NO_DATA,
 
                     navigationStatus = if (demoRunning)
-                        "DEMO - Simulated approach"
+                        "DEMO | Simulated approach | 2 scenes"
                     else
                         "No verified live approach. TBT candidates: ${realCues.size}",
 
@@ -1002,7 +1442,7 @@ class KDriveSituationActivity : ComponentActivity() {
                     distanceMeters = shown?.distanceMeters?.toDouble(),
                     guidanceTitle = item?.title,
                     guidanceText = item?.let {
-                        KDriveExtraContent.forSituation(it.id, language, drivingCountry)
+                        userShowcaseText(it.id, language, drivingCountry)
                             ?: it.message(language)
                     },
                     voiceStatus = ttsStatus
@@ -1011,6 +1451,69 @@ class KDriveSituationActivity : ComponentActivity() {
                 Column(
                     modifier = Modifier.fillMaxSize()
                 ) {
+                                        // KDRIVE_PARKED_PREVIEW_BUTTON_V1
+                    // Debug-only parked UI preview.
+                    if (isDebugBuild()) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                debugParkedPreview = !debugParkedPreview
+                                Log.d(
+                                    TAG,
+                                    "PARKED_PREVIEW_ENABLED=$debugParkedPreview"
+                                )
+                            },
+                            modifier = Modifier.padding(
+                                horizontal = 12.dp,
+                                vertical = 4.dp
+                            )
+                        ) {
+                            androidx.compose.material3.Text(
+                                if (debugParkedPreview)
+                                    "Debug Parked Preview: ON"
+                                else
+                                    "Debug Parked Preview: OFF"
+                            )
+                        }
+                    }
+
+// Debug parked-only entry; not a driving UI.
+                    if (isDebugBuild() && debugParkedPreview) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                routeTipTollPlace =
+                                    if (routeAcceptingTbt) {
+                                        realCues.firstOrNull {
+                                            it.situationId == "toll"
+                                        }?.place
+                                    } else null
+
+                                routeTipRoundaboutPlace =
+                                    if (routeAcceptingTbt) {
+                                        realCues.firstOrNull {
+                                            it.situationId == "roundabout"
+                                        }?.place
+                                    } else null
+
+                                Log.d(
+                                    TAG,
+                                    "PRETRIP_OPEN toll=${routeTipTollPlace != null} " +
+                                        "roundabout=${routeTipRoundaboutPlace != null}"
+                                )
+
+                                showRouteTips = true
+                            },
+                            enabled = !demoRunning,
+                            modifier = Modifier.padding(
+                                horizontal = 12.dp,
+                                vertical = 4.dp
+                            )
+                        ) {
+                            androidx.compose.material3.Text(
+                                "Before You Drive · Route Tips"
+                            )
+                        }
+                    }
+
                     Row(
                         horizontalArrangement =
                             Arrangement.spacedBy(12.dp)
@@ -1202,7 +1705,7 @@ class KDriveSituationActivity : ComponentActivity() {
 
                                 Text(
                                     content?.let {
-                                        KDriveExtraContent.forSituation(it.id, language, drivingCountry)
+                                        userShowcaseText(it.id, language, drivingCountry)
                                             ?: it.message(language)
                                     }
                                         ?: "해당 언어의 안내 문구가 아직 준비되지 않았습니다.",
@@ -1315,6 +1818,8 @@ class KDriveSituationActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(naviAuditPollTask)
+        naviAuditRemainingPolls = 0
         voiceQueue.close()
         closed = true
         stopDemo()
@@ -1323,7 +1828,7 @@ class KDriveSituationActivity : ComponentActivity() {
 
         try {
             navi?.let {
-                if (naviListenerAdded) it.removeListener(naviListener)
+                if (naviListenerAdded) it.removeListener(if (isDebugBuild()) naviAuditListener else naviListener)
                 it.release()
             }
         } catch (e: Exception) {
