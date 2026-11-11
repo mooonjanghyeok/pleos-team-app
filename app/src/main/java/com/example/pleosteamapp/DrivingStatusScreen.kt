@@ -1,36 +1,31 @@
 
 package com.example.pleosteamapp
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-
-import androidx.compose.runtime.Composable
-
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-
 import java.util.Locale
 
-/**
- * K-DRIVE GUIDE - PC2
- * Driving Status UI
- *
- * NO_DATA 상태에서는 이전 수동 안내를
- * 현재 내비게이션 안내로 표시하지 않는다.
- *
- * PC1 SDK 및 TTS는 수정하지 않는다.
+/*
+ * K-DRIVE / Driving Status
+ * Public state model and callback interface
+ * are used by PC1.
  */
 
 enum class KDriveUiDataSource {
@@ -42,65 +37,305 @@ enum class KDriveUiDataSource {
 data class KDriveDrivingStatusUiState(
     val source: KDriveUiDataSource =
         KDriveUiDataSource.NO_DATA,
-
     val navigationStatus: String =
         "Waiting for navigation",
-
     val autoGuideEnabled: Boolean = false,
     val demoRunning: Boolean = false,
-
     val placeName: String? = null,
     val distanceMeters: Double? = null,
-
     val guidanceTitle: String? = null,
     val guidanceText: String? = null,
-
     val voiceStatus: String = "Idle"
 )
 
-private fun kdriveShortMessage(
+private data class KdStatusWords(
+    val back: String,
+    val title: String,
+    val live: String,
+    val unavailable: String,
+    val sourceLabel: String,
+    val noData: String,
+    val real: String,
+    val demo: String,
+    val nextPoint: String,
+    val auto: String,
+    val current: String,
+    val noActive: String,
+    val noGuidance: String,
+    val guidancePlaceholder: String,
+    val voice: String,
+    val noVoice: String,
+    val replay: String,
+    val stopVoice: String,
+    val startDemo: String,
+    val stopDemo: String,
+    val demoNote: String
+)
+
+private fun kdStatusWords(
+    lang: String
+): KdStatusWords = when (lang) {
+
+    "KO" -> KdStatusWords(
+        "← 뒤로",
+        "주행 상태",
+        "실시간 주행 안내",
+        "길 안내를 사용할 수 없습니다.",
+        "데이터 출처",
+        "데이터 없음",
+        "실제 내비게이션",
+        "데모 · 시뮬레이션",
+        "다음 안내 지점",
+        "자동 안내",
+        "현재 안내",
+        "진행 중인 경로 없음",
+        "현재 안내 없음",
+        "경로 정보가 수신되면 이곳에 표시됩니다.",
+        "음성 상태",
+        "진행 중인 안내 없음",
+        "다시 재생",
+        "음성 중지",
+        "데모 시작",
+        "데모 중지",
+        "데모는 가상 데이터이며 실제 주행 정보가 아닙니다."
+    )
+
+    "FR" -> KdStatusWords(
+        "← Retour",
+        "État de conduite",
+        "GUIDAGE EN DIRECT",
+        "Guidage indisponible.",
+        "SOURCE DES DONNÉES",
+        "AUCUNE DONNÉE",
+        "NAVIGATION RÉELLE",
+        "DÉMO · SIMULATION",
+        "PROCHAINE INDICATION",
+        "Guidage automatique",
+        "GUIDAGE ACTUEL",
+        "Aucun itinéraire actif",
+        "Aucune instruction active",
+        "Les indications apparaîtront ici lorsqu'elles seront disponibles.",
+        "État vocal",
+        "Aucun guidage actif",
+        "Réécouter",
+        "Arrêter la voix",
+        "Lancer la démo",
+        "Arrêter la démo",
+        "Les données de démonstration sont simulées et ne reflètent pas la circulation réelle."
+    )
+
+    "ES" -> KdStatusWords(
+        "← Volver",
+        "Estado de conducción",
+        "GUÍA EN DIRECTO",
+        "Guía de navegación no disponible.",
+        "ORIGEN DE DATOS",
+        "SIN DATOS",
+        "NAVEGACIÓN REAL",
+        "DEMO · SIMULACIÓN",
+        "SIGUIENTE INDICACIÓN",
+        "Guía automática",
+        "INDICACIONES ACTUALES",
+        "Ninguna ruta activa",
+        "Sin indicaciones activas",
+        "Las indicaciones aparecerán aquí cuando estén disponibles.",
+        "Estado de voz",
+        "Sin guía activa",
+        "Repetir",
+        "Detener voz",
+        "Iniciar demo",
+        "Detener demo",
+        "La demostración usa datos simulados, no información real de conducción."
+    )
+
+    else -> KdStatusWords(
+        "← Back",
+        "Driving Status",
+        "LIVE GUIDANCE",
+        "Navigation guidance unavailable.",
+        "DATA SOURCE",
+        "NO DATA",
+        "REAL NAVIGATION",
+        "DEMO · SIMULATION",
+        "NEXT GUIDANCE POINT",
+        "Automatic guide",
+        "CURRENT GUIDANCE",
+        "No active navigation",
+        "No active guidance",
+        "Navigation guidance will appear here when available.",
+        "Voice",
+        "No active navigation guidance",
+        "Replay",
+        "Stop voice",
+        "Start demo",
+        "Stop demo",
+        "Demo is simulated. Not live driving information."
+    )
+}
+
+@Composable
+private fun kdStatusLanguage(): String {
+    val context = LocalContext.current
+    val preview = LocalInspectionMode.current
+
+    return remember(context, preview) {
+        if (preview) {
+            "EN"
+        } else {
+            context.applicationContext
+                .getSharedPreferences(
+                    "kdrive_ui_colors_v2",
+                    Context.MODE_PRIVATE
+                )
+                .getString("startup_language", "EN")
+                ?.uppercase(Locale.ROOT)
+                ?.takeIf {
+                    it in listOf("KO", "EN", "FR", "ES")
+                } ?: "EN"
+        }
+    }
+}
+
+private fun kdStatusShort(
     source: String?,
+    fallback: String,
     maxChars: Int = 120
 ): String {
+    if (source.isNullOrBlank()) return fallback
 
-    if (source.isNullOrBlank()) {
-        return "No current guidance"
-    }
-
-    val words = source.trim()
+    val text = source.trim()
         .split(Regex("\\s+"))
         .take(24)
         .joinToString(" ")
 
-    return if (words.length <= maxChars) {
-        words
+    return if (text.length <= maxChars) {
+        text
     } else {
-        words.take(maxChars - 1).trimEnd() + "…"
+        text.take(maxChars - 1).trimEnd() + "…"
     }
 }
 
-private fun kdriveDistanceText(
+private fun kdStatusDistance(
     meters: Double?
 ): String {
-
-    if (
+    return if (
         meters == null ||
         !meters.isFinite() ||
         meters < 0.0
     ) {
-        return "—"
+        "—"
+    } else {
+        String.format(Locale.US, "%,.0f m", meters)
     }
-
-    return String.format(
-        Locale.US,
-        "%,.0f m",
-        meters
-    )
 }
 
-// -------------------------------------------
-// Main Screen
-// -------------------------------------------
+// ==================================================
+// Translate known demo/placeholder messages.
+// Unknown real navigation data remains unchanged.
+// ==================================================
+
+private fun kdKnownStatusText(
+    value: String?,
+    lang: String
+): String? {
+    if (value.isNullOrBlank()) return value
+
+    val translations =
+        when (value.trim().lowercase(Locale.ROOT)) {
+            "waiting for navigation" -> listOf(
+                "길 안내 대기 중",
+                "Waiting for navigation",
+                "En attente de navigation",
+                "Esperando navegación"
+            )
+
+            "navigation guidance unavailable" -> listOf(
+                "길 안내를 사용할 수 없습니다",
+                "Navigation guidance unavailable",
+                "Guidage indisponible",
+                "Guía de navegación no disponible"
+            )
+
+            "simulation active",
+            "simulated route" -> listOf(
+                "가상 주행 중",
+                "Simulation active",
+                "Simulation en cours",
+                "Simulación activa"
+            )
+
+            "simulation stopped" -> listOf(
+                "시뮬레이션 중지",
+                "Simulation stopped",
+                "Simulation arrêtée",
+                "Simulación detenida"
+            )
+
+            "sample tollgate" -> listOf(
+                "예시 톨게이트",
+                "Sample Tollgate",
+                "Péage de démonstration",
+                "Peaje de ejemplo"
+            )
+
+            "tollgate ahead" -> listOf(
+                "전방에 톨게이트가 있습니다",
+                "Tollgate ahead",
+                "Péage à proximité",
+                "Peaje más adelante"
+            )
+
+            "choose a safe payment lane." -> listOf(
+                "안전한 결제 차로를 선택하세요.",
+                "Choose a safe payment lane.",
+                "Choisissez une voie de paiement adaptée.",
+                "Elija un carril de pago adecuado."
+            )
+
+            "check the payment lane signs." -> listOf(
+                "결제 차로 안내 표지를 확인하세요.",
+                "Check the payment lane signs.",
+                "Vérifiez les panneaux des voies de péage.",
+                "Compruebe las señales de los carriles de peaje."
+            )
+
+            "idle" -> listOf(
+                "대기 중",
+                "Idle",
+                "En attente",
+                "En espera"
+            )
+
+            "stop requested" -> listOf(
+                "중지 요청됨",
+                "Stop requested",
+                "Arrêt demandé",
+                "Detención solicitada"
+            )
+
+            "route guidance active" -> listOf(
+                "경로 안내 중",
+                "Route guidance active",
+                "Guidage en cours",
+                "Guía de ruta activa"
+            )
+
+            else -> return value
+        }
+
+    val index = when (lang) {
+        "KO" -> 0
+        "FR" -> 2
+        "ES" -> 3
+        else -> 1
+    }
+
+    return translations[index]
+}
+
+// ==================================================
+// Main screen
+// ==================================================
 
 @Composable
 fun DrivingStatusScreen(
@@ -111,140 +346,116 @@ fun DrivingStatusScreen(
     onDemoStopRequest: () -> Unit,
     onReplayRequest: () -> Unit,
     onStopVoiceRequest: () -> Unit,
-    interactionRestricted: Boolean = true
+    interactionRestricted: Boolean = true,
+    uiLanguage: String? = null
 ) {
-
+    val lang = uiLanguage ?: kdStatusLanguage()
+    val words = kdStatusWords(lang)
     val colors = MaterialTheme.colorScheme
 
     val hasNavigationData =
         state.source != KDriveUiDataSource.NO_DATA
 
-    // 주행 제한 상태
     if (interactionRestricted) {
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(colors.background)
                 .padding(24.dp),
-
-            verticalArrangement =
-                Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-
             Text(
-                text = "K-DRIVE",
-                style =
-                    MaterialTheme.typography.headlineLarge
+                "K-DRIVE",
+                style = MaterialTheme.typography.headlineLarge
             )
 
             Text(
-                text = "LIVE GUIDANCE",
-                style =
-                    MaterialTheme.typography.titleLarge,
+                words.live,
+                style = MaterialTheme.typography.titleLarge,
                 color = colors.primary
             )
 
             if (state.source == KDriveUiDataSource.REAL) {
-
                 Text(
-                    text = kdriveShortMessage(
-                        state.guidanceTitle
+                    kdStatusShort(
+                        kdKnownStatusText(state.guidanceTitle, lang),
+                        words.noGuidance
                     ),
-                    style =
-                        MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.headlineMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
 
                 Text(
-                    text = kdriveShortMessage(
-                        state.guidanceText,
+                    kdStatusShort(
+                        kdKnownStatusText(state.guidanceText, lang),
+                        words.guidancePlaceholder,
                         80
                     ),
-                    style =
-                        MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-
             } else {
-
                 Text(
-                    text = "Navigation guidance unavailable",
-                    style =
-                        MaterialTheme.typography.headlineMedium,
-                    maxLines = 2
+                    words.unavailable,
+                    style = MaterialTheme.typography.headlineMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
-
         return
     }
 
-    // 정차 모드
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-
         val wide = maxWidth >= 670.dp
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(18.dp),
-
-            verticalArrangement =
-                Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement =
-                    Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-
                 KDriveActionButton(
-                    label = "Back",
-                    onClick = onBack,
+                    words.back,
+                    onBack,
                     filled = false
                 )
 
                 Text(
-                    text = "Driving Status",
-                    style =
-                        MaterialTheme.typography.headlineMedium
+                    words.title,
+                    style = MaterialTheme.typography.headlineMedium
                 )
             }
 
             if (wide) {
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-
-                    horizontalArrangement =
-                        Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .verticalScroll(
-                                rememberScrollState()
-                            )
+                            .verticalScroll(rememberScrollState())
                     ) {
-
-                        KDriveStatusOverview(
-                            state = state,
-                            hasNavigationData =
-                                hasNavigationData,
-                            onAutoGuideChange =
-                                onAutoGuideChange
+                        KdStatusOverview(
+                            state,
+                            hasNavigationData,
+                            words,
+                            lang,
+                            onAutoGuideChange
                         )
                     }
 
@@ -252,60 +463,44 @@ fun DrivingStatusScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .verticalScroll(
-                                rememberScrollState()
-                            )
+                            .verticalScroll(rememberScrollState())
                     ) {
-
-                        KDriveStatusControls(
-                            state = state,
-                            hasNavigationData =
-                                hasNavigationData,
-                            onDemoStartRequest =
-                                onDemoStartRequest,
-                            onDemoStopRequest =
-                                onDemoStopRequest,
-                            onReplayRequest =
-                                onReplayRequest,
-                            onStopVoiceRequest =
-                                onStopVoiceRequest
+                        KdStatusControls(
+                            state,
+                            hasNavigationData,
+                            words,
+                            lang,
+                            onDemoStartRequest,
+                            onDemoStopRequest,
+                            onReplayRequest,
+                            onStopVoiceRequest
                         )
                     }
                 }
-
             } else {
-
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(
-                            rememberScrollState()
-                        ),
-
-                    verticalArrangement =
-                        Arrangement.spacedBy(14.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-
-                    KDriveStatusOverview(
-                        state = state,
-                        hasNavigationData =
-                            hasNavigationData,
-                        onAutoGuideChange =
-                            onAutoGuideChange
+                    KdStatusOverview(
+                        state,
+                        hasNavigationData,
+                        words,
+                        lang,
+                        onAutoGuideChange
                     )
 
-                    KDriveStatusControls(
-                        state = state,
-                        hasNavigationData =
-                            hasNavigationData,
-                        onDemoStartRequest =
-                            onDemoStartRequest,
-                        onDemoStopRequest =
-                            onDemoStopRequest,
-                        onReplayRequest =
-                            onReplayRequest,
-                        onStopVoiceRequest =
-                            onStopVoiceRequest
+                    KdStatusControls(
+                        state,
+                        hasNavigationData,
+                        words,
+                        lang,
+                        onDemoStartRequest,
+                        onDemoStopRequest,
+                        onReplayRequest,
+                        onStopVoiceRequest
                     )
                 }
             }
@@ -313,70 +508,53 @@ fun DrivingStatusScreen(
     }
 }
 
-// -------------------------------------------
-// Navigation Overview
-// -------------------------------------------
-
 @Composable
-private fun KDriveStatusOverview(
+private fun KdStatusOverview(
     state: KDriveDrivingStatusUiState,
-    hasNavigationData: Boolean,
+    hasData: Boolean,
+    words: KdStatusWords,
+    lang: String,
     onAutoGuideChange: (Boolean) -> Unit
 ) {
-
     val colors = MaterialTheme.colorScheme
 
     Column(
-        verticalArrangement =
-            Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = colors.surface
             ),
             shape = RoundedCornerShape(20.dp)
         ) {
-
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-
                 Text(
-                    text = "DATA SOURCE",
-                    style =
-                        MaterialTheme.typography.labelLarge,
+                    words.sourceLabel,
+                    style = MaterialTheme.typography.labelLarge,
                     color = colors.primary
                 )
 
                 Text(
-                    text = when (state.source) {
-
-                        KDriveUiDataSource.NO_DATA ->
-                            "NO DATA"
-
-                        KDriveUiDataSource.REAL ->
-                            "REAL NAVIGATION"
-
-                        KDriveUiDataSource.DEMO ->
-                            "DEMO · SIMULATION"
+                    when (state.source) {
+                        KDriveUiDataSource.NO_DATA -> words.noData
+                        KDriveUiDataSource.REAL -> words.real
+                        KDriveUiDataSource.DEMO -> words.demo
                     },
-                    style =
-                        MaterialTheme.typography.titleLarge
+                    style = MaterialTheme.typography.titleLarge
                 )
 
                 Text(
-                    text = kdriveShortMessage(
-                        state.navigationStatus,
+                    kdStatusShort(
+                        kdKnownStatusText(state.navigationStatus, lang),
+                        words.noActive,
                         80
                     ),
-                    style =
-                        MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge,
                     maxLines = 2
                 )
             }
@@ -388,44 +566,38 @@ private fun KDriveStatusOverview(
             ),
             shape = RoundedCornerShape(20.dp)
         ) {
-
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-
                 Text(
-                    text = "NEXT GUIDANCE POINT",
-                    style =
-                        MaterialTheme.typography.labelLarge,
+                    words.nextPoint,
+                    style = MaterialTheme.typography.labelLarge,
                     color = colors.primary
                 )
 
                 Text(
-                    text = if (hasNavigationData) {
-                        kdriveShortMessage(state.placeName)
+                    if (hasData) {
+                        kdStatusShort(
+                            kdKnownStatusText(state.placeName, lang),
+                            words.noActive
+                        )
                     } else {
-                        "No active navigation"
+                        words.noActive
                     },
-                    style =
-                        MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge,
                     maxLines = 2
                 )
 
                 Text(
-                    text = if (hasNavigationData) {
-                        kdriveDistanceText(
-                            state.distanceMeters
-                        )
+                    if (hasData) {
+                        kdStatusDistance(state.distanceMeters)
                     } else {
                         "—"
                     },
-                    style =
-                        MaterialTheme.typography.headlineLarge
+                    style = MaterialTheme.typography.headlineLarge
                 )
             }
         }
@@ -435,19 +607,15 @@ private fun KDriveStatusOverview(
                 containerColor = colors.surface
             )
         ) {
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp),
-
                 verticalAlignment = Alignment.CenterVertically
             ) {
-
                 Text(
-                    text = "Automatic guide",
-                    style =
-                        MaterialTheme.typography.titleMedium,
+                    words.auto,
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -460,93 +628,77 @@ private fun KDriveStatusOverview(
     }
 }
 
-// -------------------------------------------
-// Guidance and Voice Controls
-// -------------------------------------------
-
 @Composable
-private fun KDriveStatusControls(
+private fun KdStatusControls(
     state: KDriveDrivingStatusUiState,
-    hasNavigationData: Boolean,
+    hasData: Boolean,
+    words: KdStatusWords,
+    lang: String,
     onDemoStartRequest: () -> Unit,
     onDemoStopRequest: () -> Unit,
     onReplayRequest: () -> Unit,
     onStopVoiceRequest: () -> Unit
 ) {
-
     val colors = MaterialTheme.colorScheme
 
-    val hasReplay =
-        hasNavigationData &&
-                !state.guidanceText.isNullOrBlank()
-
     Column(
-        verticalArrangement =
-            Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = colors.surface
             )
         ) {
-
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-
                 Text(
-                    text = "CURRENT GUIDANCE",
-                    style =
-                        MaterialTheme.typography.labelLarge,
+                    words.current,
+                    style = MaterialTheme.typography.labelLarge,
                     color = colors.primary
                 )
 
                 Text(
-                    text = if (hasNavigationData) {
-                        kdriveShortMessage(
-                            state.guidanceTitle
+                    if (hasData) {
+                        kdStatusShort(
+                            kdKnownStatusText(state.guidanceTitle, lang),
+                            words.noGuidance
                         )
                     } else {
-                        "No active guidance"
+                        words.noGuidance
                     },
-                    style =
-                        MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge,
                     maxLines = 2
                 )
 
                 Text(
-                    text = if (hasNavigationData) {
-                        kdriveShortMessage(
-                            state.guidanceText
+                    if (hasData) {
+                        kdStatusShort(
+                            kdKnownStatusText(state.guidanceText, lang),
+                            words.guidancePlaceholder
                         )
                     } else {
-                        "Navigation guidance will appear " +
-                                "here when available."
+                        words.guidancePlaceholder
                     },
-                    style =
-                        MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
 
                 Text(
-                    text = if (hasNavigationData) {
-                        "Voice: " +
-                                kdriveShortMessage(
-                                    state.voiceStatus,
-                                    60
-                                )
+                    "${words.voice}: " + if (hasData) {
+                        kdStatusShort(
+                            kdKnownStatusText(state.voiceStatus, lang),
+                            words.noVoice,
+                            60
+                        )
                     } else {
-                        "Voice: no active navigation guidance"
+                        words.noVoice
                     },
-                    style =
-                        MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 2
                 )
             }
@@ -554,21 +706,20 @@ private fun KDriveStatusControls(
 
         Row(
             horizontalArrangement =
-                Arrangement.spacedBy(
-                    KDriveUiSize.actionGap
-                )
+                Arrangement.spacedBy(KDriveUiSize.actionGap)
         ) {
-
             KDriveActionButton(
-                label = "Replay",
-                onClick = onReplayRequest,
+                words.replay,
+                onReplayRequest,
                 modifier = Modifier.weight(1f),
-                enabled = hasReplay
+                enabled =
+                    hasData &&
+                            !state.guidanceText.isNullOrBlank()
             )
 
             KDriveActionButton(
-                label = "Stop voice",
-                onClick = onStopVoiceRequest,
+                words.stopVoice,
+                onStopVoiceRequest,
                 modifier = Modifier.weight(1f),
                 filled = false
             )
@@ -576,9 +727,9 @@ private fun KDriveStatusControls(
 
         KDriveActionButton(
             label = if (state.demoRunning) {
-                "Stop demo"
+                words.stopDemo
             } else {
-                "Start demo"
+                words.startDemo
             },
             onClick = if (state.demoRunning) {
                 onDemoStopRequest
@@ -590,39 +741,30 @@ private fun KDriveStatusControls(
         )
 
         Text(
-            text = "Demo is simulated. " +
-                    "Not live driving information.",
+            words.demoNote,
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 2
         )
     }
 }
 
-// -------------------------------------------
-// Preview: Demo
-// -------------------------------------------
-
 @Preview(
-    name = "Status - Parked demo",
+    name = "Driving Status - French",
     widthDp = 1000,
     heightDp = 600,
     showBackground = true
 )
 @Composable
-private fun KDriveStatusParkedPreview() {
-
-    KDriveTheme(KDRIVE_THEME_PRESETS[0]) {
-
+private fun KdStatusFrenchPreview() {
+    KDriveTheme(KDRIVE_THEME_PRESETS.first()) {
         DrivingStatusScreen(
             state = KDriveDrivingStatusUiState(
                 source = KDriveUiDataSource.DEMO,
-                navigationStatus = "Simulation active",
+                navigationStatus = "Simulated route",
                 demoRunning = true,
                 placeName = "Sample Tollgate",
-                distanceMeters = 500.0,
                 guidanceTitle = "Tollgate ahead",
-                guidanceText =
-                    "Choose a safe payment lane."
+                guidanceText = "Check the payment lane signs."
             ),
             onBack = {},
             onAutoGuideChange = {},
@@ -630,74 +772,8 @@ private fun KDriveStatusParkedPreview() {
             onDemoStopRequest = {},
             onReplayRequest = {},
             onStopVoiceRequest = {},
-            interactionRestricted = false
-        )
-    }
-}
-
-// -------------------------------------------
-// Preview: NO DATA + Previous Manual Rule
-// -------------------------------------------
-
-@Preview(
-    name = "Status - No Data with old manual text",
-    widthDp = 1000,
-    heightDp = 600,
-    showBackground = true
-)
-@Composable
-private fun KDriveStatusNoDataPreview() {
-
-    KDriveTheme(KDRIVE_THEME_PRESETS[0]) {
-
-        DrivingStatusScreen(
-            state = KDriveDrivingStatusUiState(
-                source = KDriveUiDataSource.NO_DATA,
-                guidanceTitle = "Manual rule",
-                guidanceText =
-                    "Yield to traffic when merging.",
-                voiceStatus = "Stop requested"
-            ),
-            onBack = {},
-            onAutoGuideChange = {},
-            onDemoStartRequest = {},
-            onDemoStopRequest = {},
-            onReplayRequest = {},
-            onStopVoiceRequest = {},
-            interactionRestricted = false
-        )
-    }
-}
-
-// -------------------------------------------
-// Preview: Driving Restricted
-// -------------------------------------------
-
-@Preview(
-    name = "Status - Driving restricted",
-    widthDp = 1000,
-    heightDp = 600,
-    showBackground = true
-)
-@Composable
-private fun KDriveStatusRestrictedPreview() {
-
-    KDriveTheme(KDRIVE_THEME_PRESETS[0]) {
-
-        DrivingStatusScreen(
-            state = KDriveDrivingStatusUiState(
-                source = KDriveUiDataSource.REAL,
-                guidanceTitle = "Roundabout ahead",
-                guidanceText =
-                    "Yield to circulating traffic."
-            ),
-            onBack = {},
-            onAutoGuideChange = {},
-            onDemoStartRequest = {},
-            onDemoStopRequest = {},
-            onReplayRequest = {},
-            onStopVoiceRequest = {},
-            interactionRestricted = true
+            interactionRestricted = false,
+            uiLanguage = "FR"
         )
     }
 }

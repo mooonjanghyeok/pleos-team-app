@@ -1,9 +1,12 @@
 package com.example.pleosteamapp
 
 import android.graphics.Color as AndroidColor
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -11,6 +14,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -35,68 +39,81 @@ data class KDrivePalette(
 
 const val KDRIVE_DEFAULT_THEME = "midnight"
 
+// Preset IDs remain stable; removed selections fall back to Midnight.
 val KDRIVE_THEME_PRESETS = listOf(
     KDrivePalette("midnight", "Midnight", "#0B1726", "#1A3046", "#6EE7C4", "#FFFFFF", true),
-    KDrivePalette("ocean", "Ocean Blue", "#0A2038", "#173C5B", "#80CEFF", "#FFFFFF", true),
     KDrivePalette("graphite", "Graphite", "#15191F", "#292F38", "#F5BD69", "#FFFFFF", true),
     KDrivePalette("snow", "Snow White", "#EFF4F9", "#FFFFFF", "#2369C9", "#152536", false),
-    KDrivePalette("emerald", "Emerald", "#0D241D", "#1B3E31", "#8BECAD", "#FFFFFF", true),
     KDrivePalette("purple", "Royal Purple", "#191630", "#302A51", "#C3A4FF", "#FFFFFF", true),
-    KDrivePalette("crimson", "Crimson", "#251419", "#43252D", "#FF9EAD", "#FFFFFF", true),
     KDrivePalette("amber", "Amber", "#271D13", "#43301D", "#FFD173", "#FFFFFF", true),
-    KDrivePalette("sunset", "Sunset", "#291B2B", "#492F47", "#FFB28A", "#FFFFFF", true),
-    KDrivePalette("sky", "Sky Light", "#EAF5FA", "#FFFFFF", "#0E718B", "#163041", false),
-    KDrivePalette("espresso", "Espresso", "#211B19", "#3D302A", "#F1C59B", "#FFFFFF", true),
-    KDrivePalette("contrast", "High Contrast", "#000000", "#1B1B1B", "#FFE54D", "#FFFFFF", true)
+
+    // Selected newer palettes retained for visual variety.
+    KDrivePalette("sage", "Sage Studio", "#E8EFE6", "#FFFFFF", "#286B45", "#1D3327", false),
+    KDrivePalette("lilac", "Lilac Paper", "#F3ECFF", "#FFFFFF", "#6740A6", "#282039", false),
+    KDrivePalette("rose", "Rose Quartz", "#FFF0F4", "#FFFFFF", "#9F2851", "#382030", false),
+    KDrivePalette("moss", "Moss Forest", "#101E18", "#283B2A", "#C9F27A", "#FFFFFF", true),
+    KDrivePalette("plum", "Plum Wine", "#251524", "#452840", "#FFC0D7", "#FFFFFF", true)
 )
 
-val KDRIVE_CUSTOM_DEFAULT = KDRIVE_THEME_PRESETS.first().copy(id = "custom", name = "Custom")
+// Retained for compatibility with existing KDriveUiApp.kt saved preferences.
+val KDRIVE_CUSTOM_DEFAULT =
+    KDRIVE_THEME_PRESETS.first().copy(id = "custom", name = "Custom")
 
 fun kdriveNormalizeHex(raw: String): String =
     "#" + raw.trim().removePrefix("#").uppercase(Locale.US)
 
 fun kdriveParseHex(raw: String): Color? {
-    val normalized = kdriveNormalizeHex(raw)
-    if (!Regex("^#[0-9A-F]{6}$").matches(normalized)) return null
-    return try { Color(AndroidColor.parseColor(normalized)) } catch (_: Exception) { null }
+    val hex = kdriveNormalizeHex(raw)
+    if (!Regex("^#[0-9A-F]{6}$").matches(hex)) return null
+    return try {
+        Color(AndroidColor.parseColor(hex))
+    } catch (_: Exception) {
+        null
+    }
 }
 
 fun kdriveContrastRatio(first: Color, second: Color): Double {
-    val hi = maxOf(first.luminance(), second.luminance()).toDouble()
-    val lo = minOf(first.luminance(), second.luminance()).toDouble()
-    return (hi + 0.05) / (lo + 0.05)
+    val a = first.luminance().toDouble()
+    val b = second.luminance().toDouble()
+    return (maxOf(a, b) + 0.05) / (minOf(a, b) + 0.05)
 }
 
-// Design Guide: text and informative icon contrast >= 4.5:1.
 fun kdrivePaletteIsReadable(palette: KDrivePalette): Boolean {
-    val background = kdriveParseHex(palette.backgroundHex) ?: return false
+    val bg = kdriveParseHex(palette.backgroundHex) ?: return false
     val card = kdriveParseHex(palette.cardHex) ?: return false
     val accent = kdriveParseHex(palette.accentHex) ?: return false
     val text = kdriveParseHex(palette.textHex) ?: return false
-    return kdriveContrastRatio(text, background) >= 4.5 &&
+    return kdriveContrastRatio(text, bg) >= 4.5 &&
             kdriveContrastRatio(text, card) >= 4.5 &&
-            kdriveContrastRatio(accent, card) >= 4.5 &&
-            kdriveContrastRatio(accent, background) >= 4.5
+            kdriveContrastRatio(accent, bg) >= 4.5 &&
+            kdriveContrastRatio(accent, card) >= 4.5
 }
 
-fun kdriveResolvePalette(id: String, custom: KDrivePalette, systemDark: Boolean): KDrivePalette {
-    val selected = when (id) {
-        "system" -> KDRIVE_THEME_PRESETS.first { it.id == if (systemDark) "midnight" else "snow" }
+fun kdriveResolvePalette(
+    id: String,
+    custom: KDrivePalette,
+    systemDark: Boolean
+): KDrivePalette {
+    val chosen = when (id) {
+        "system" -> KDRIVE_THEME_PRESETS.first {
+            it.id == if (systemDark) "midnight" else "snow"
+        }
+        // Backward compatibility for older saved custom themes.
         "custom" -> custom
-        else -> KDRIVE_THEME_PRESETS.firstOrNull { it.id == id } ?: KDRIVE_THEME_PRESETS.first()
+        else -> KDRIVE_THEME_PRESETS.firstOrNull { it.id == id }
+            ?: KDRIVE_THEME_PRESETS.first()
     }
-    return if (kdrivePaletteIsReadable(selected)) selected else KDRIVE_THEME_PRESETS.first()
+    return if (kdrivePaletteIsReadable(chosen)) chosen else KDRIVE_THEME_PRESETS.first()
 }
 
-// Limit variable data before displaying it in vehicle UI.
 fun kdriveSafeMessage(value: String?, maxChars: Int = 120): String {
     if (value.isNullOrBlank()) return "No current guidance"
-    val limitedWords = value.trim().split(Regex("\\s+")).take(24).joinToString(" ")
-    return if (limitedWords.length <= maxChars) limitedWords
-    else limitedWords.take(maxChars - 1).trimEnd() + "…"
+    val limited = value.trim().split(Regex("\\s+")).take(24).joinToString(" ")
+    return if (limited.length <= maxChars) limited
+    else limited.take(maxChars - 1).trimEnd() + "…"
 }
 
-// This is an implementation choice, NOT an official Pleos pixel/dp requirement.
+// Project UI choice, not a claimed official Pleos dp requirement.
 object KDriveUiSize {
     val touchHeight = 72.dp
     val actionGap = 12.dp
@@ -111,7 +128,8 @@ fun KDriveActionButton(
     enabled: Boolean = true,
     filled: Boolean = true
 ) {
-    val sizeModifier = modifier.heightIn(min = KDriveUiSize.touchHeight)
+    val scheme = MaterialTheme.colorScheme
+    val size = modifier.heightIn(min = KDriveUiSize.touchHeight)
     val content: @Composable () -> Unit = {
         Text(
             text = label,
@@ -121,11 +139,33 @@ fun KDriveActionButton(
         )
     }
     if (filled) {
-        Button(onClick = onClick, enabled = enabled, modifier = sizeModifier,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) { content() }
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = size,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = scheme.primary,
+                contentColor = scheme.onPrimary,
+                disabledContainerColor = scheme.surfaceVariant,
+                disabledContentColor = scheme.onSurfaceVariant
+            ),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+        ) { content() }
     } else {
-        OutlinedButton(onClick = onClick, enabled = enabled, modifier = sizeModifier,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) { content() }
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = size,
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = scheme.primary,
+                disabledContentColor = scheme.onSurfaceVariant
+            ),
+            border = BorderStroke(
+                1.dp,
+                if (enabled) scheme.outline else scheme.outline.copy(alpha = 0.65f)
+            ),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+        ) { content() }
     }
 }
 
@@ -148,24 +188,35 @@ fun KDriveTheme(palette: KDrivePalette, content: @Composable () -> Unit) {
     val card = kdriveParseHex(safe.cardHex)!!
     val accent = kdriveParseHex(safe.accentHex)!!
     val text = kdriveParseHex(safe.textHex)!!
-    val mutedCandidate = lerp(text, card, 0.13f)
-    val secondary = if (kdriveContrastRatio(mutedCandidate, card) >= 4.5 &&
-        kdriveContrastRatio(mutedCandidate, bg) >= 4.5) mutedCandidate else text
-    val onAccent = if (kdriveContrastRatio(accent, Color.Black) >= 4.5) Color.Black else Color.White
+
+    val muted = lerp(text, card, 0.13f)
+    val secondaryText = if (kdriveContrastRatio(muted, card) >= 4.5 &&
+        kdriveContrastRatio(muted, bg) >= 4.5) muted else text
+    val onAccent = if (kdriveContrastRatio(accent, Color.Black) >= 4.5)
+        Color.Black else Color.White
+
     val scheme = if (safe.dark) darkColorScheme(
         primary = accent, onPrimary = onAccent,
         primaryContainer = card, onPrimaryContainer = text,
         background = bg, onBackground = text,
         surface = card, onSurface = text,
-        surfaceVariant = card, onSurfaceVariant = secondary,
-        secondary = accent, onSecondary = onAccent, outline = accent
+        surfaceVariant = card, onSurfaceVariant = secondaryText,
+        secondary = accent, onSecondary = onAccent,
+        outline = accent
     ) else lightColorScheme(
         primary = accent, onPrimary = onAccent,
         primaryContainer = card, onPrimaryContainer = text,
         background = bg, onBackground = text,
         surface = card, onSurface = text,
-        surfaceVariant = card, onSurfaceVariant = secondary,
-        secondary = accent, onSecondary = onAccent, outline = accent
+        surfaceVariant = card, onSurfaceVariant = secondaryText,
+        secondary = accent, onSecondary = onAccent,
+        outline = accent
     )
-    MaterialTheme(colorScheme = scheme, typography = KDriveTypography, content = content)
+
+    MaterialTheme(colorScheme = scheme, typography = KDriveTypography) {
+        // Ensures plain Text outside cards inherits the correct theme text color.
+        CompositionLocalProvider(LocalContentColor provides scheme.onBackground) {
+            content()
+        }
+    }
 }
