@@ -4,7 +4,7 @@
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
     <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
 
-    <application android:allowBackup="true" android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="@xml/backup_rules" android:icon="@mipmap/ic_launcher" android:label="K-DRIVE GUIDE" android:roundIcon="@mipmap/ic_launcher_round" android:supportsRtl="true" android:theme="@style/Theme.PleosTeamApp">
+    <application android:allowBackup="true" android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="@xml/backup_rules" android:icon="@drawable/kdrive_launcher_foreground" android:label="K-DRIVE GUIDE" android:roundIcon="@drawable/kdrive_launcher_foreground" android:supportsRtl="true" android:theme="@style/Theme.PleosTeamApp">
         <activity android:name=".MainActivity" android:exported="true" android:label="@string/app_name" android:theme="@style/Theme.PleosTeamApp" android:windowSoftInputMode="adjustResize">
             
         </activity>
