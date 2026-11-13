@@ -9,6 +9,9 @@ android {
         version = release(37)
     }
 
+    // AAOS platform UX restriction API.
+    useLibrary("android.car")
+
     defaultConfig {
         applicationId = "com.example.pleosteamapp"
         minSdk = 28
@@ -22,8 +25,7 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+                enable = false
             }
         }
     }

@@ -6,6 +6,8 @@ import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.annotation.MainThread
+import androidx.lifecycle.Lifecycle
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -426,7 +428,8 @@ class KDriveSituationActivity : ComponentActivity() {
     // Only PC1 voice state is changed here.
     private var demoVoiceMuted by mutableStateOf(false)
 
-    private fun stopSpeechByUser() {
+    @MainThread
+    fun stopSpeechByUser() {
         if (demoRunning || demoFinishPending) {
             demoVoiceMuted = true
             Log.d(TAG, "DEMO_MUTED_BY_USER")
@@ -467,6 +470,14 @@ class KDriveSituationActivity : ComponentActivity() {
             },
             log = { message: String ->
                 Log.d(TAG, message)
+            },
+            postDelayed = { task, delayMs ->
+                handler.postDelayed(task, delayMs)
+                Unit
+            },
+            removeDelayed = { task ->
+                handler.removeCallbacks(task)
+                Unit
             }
         )
     }
@@ -556,6 +567,7 @@ class KDriveSituationActivity : ComponentActivity() {
 
     @Volatile
     private var routeAcceptingTbt = true
+    private var routeCancelled = false
 
     // KDRIVE_ROUTE_REACCEPT_V2
     // Only permits TBT candidate recovery, never live speech.
@@ -580,7 +592,6 @@ class KDriveSituationActivity : ComponentActivity() {
         lastSpeechSource = null
         lastVoice = ""
         realCues = emptyList()
-        showRouteTips = false
         activeCard = null
         demoQueue = emptyList()
         demoIndex = 0
@@ -600,10 +611,11 @@ class KDriveSituationActivity : ComponentActivity() {
 
     // KDRIVE_PRETRIP_ROUTE_V1
     private var showRouteTips by mutableStateOf(false)
-    private var routeTipTollPlace by mutableStateOf<String?>(null)
-    private var routeTipRoundaboutPlace by mutableStateOf<String?>(null)
     private var drivingCountry by mutableStateOf("OTHER")
     private var debugParkedPreview by mutableStateOf(false)
+
+    // DEBUG controls are collapsed by default.
+    private var debugUiMenuExpanded by mutableStateOf(false)
     private var lastVoiceLocale = "en-US"
 
     private fun isDebugBuild(): Boolean {
@@ -613,13 +625,93 @@ class KDriveSituationActivity : ComponentActivity() {
         ) != 0
     }
 
+    // Vehicle restrictions are authoritative; unknown is fail-closed.
+    private var carUxState by mutableStateOf(KDriveUxState.UNKNOWN)
+    private var carUxMonitor: KDriveUxMonitor? = null
+
+    private fun debugEmulatorOverrideAllowed(): Boolean {
+        if (!isDebugBuild()) return false
+        val hardware = android.os.Build.HARDWARE.lowercase(Locale.ROOT)
+        return hardware.contains("ranchu") || hardware.contains("goldfish")
+    }
+
+    val isDrivingRestricted: Boolean
+        get() = when (carUxState) {
+            KDriveUxState.PARKED -> false
+            KDriveUxState.RESTRICTED -> true
+            KDriveUxState.UNKNOWN ->
+                !(debugEmulatorOverrideAllowed() && debugParkedPreview)
+        }
+
+    @MainThread
+    private fun onCarUxStateChanged(state: KDriveUxState) {
+        carUxState = state
+        Log.i(TAG, "CAR_UX_STATE=$state restricted=$isDrivingRestricted")
+        if (!isDrivingRestricted) return
+
+        debugParkedPreview = false
+        debugUiMenuExpanded = false
+        showRouteTips = false
+        showTripPrep = false
+        showPc2Ui = true
+        stopDemo()
+
+        try {
+            voiceQueue.cancelAll("CAR_UX_${state.name}")
+        } catch (error: Exception) {
+            Log.e(TAG, "CAR_UX_QUEUE_STOP_ERROR", error)
+        }
+
+        try {
+            tts?.stop()
+        } catch (error: Exception) {
+            Log.e(TAG, "CAR_UX_TTS_STOP_ERROR", error)
+        }
+    }
+
+    val voiceStatus: String
+        get() = ttsStatus
+
+    @MainThread
+    fun playEmergencyPhrase(phrase: KDriveEmergencyPhrase): KDriveEmergencyVoiceResult {
+        if (isDrivingRestricted) return KDriveEmergencyVoiceResult.PARKED_REQUIRED
+        if (closed || !ttsReady || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return KDriveEmergencyVoiceResult.UNAVAILABLE
+        }
+        if (demoRunning || demoFinishPending || voiceQueue.isBusy) {
+            return KDriveEmergencyVoiceResult.BUSY
+        }
+        if (!gate.maySpeak()) return KDriveEmergencyVoiceResult.NAVIGATION_PRIORITY
+
+        ttsStatus = "한국어 도움 요청 재생 요청"
+        val accepted = voiceQueue.offer(
+            key = "EMERGENCY|${phrase.name}",
+            text = phrase.koreanText,
+            locale = "ko-KR",
+            source = "EMERGENCY"
+        )
+        if (!accepted) {
+            ttsStatus = "한국어 도움 요청 재생 실패"
+            return KDriveEmergencyVoiceResult.FAILED
+        }
+        Log.d(TAG, "EMERGENCY_SPEAK phrase=${phrase.name} locale=ko-KR")
+        return KDriveEmergencyVoiceResult.REQUESTED
+    }
+
+    @MainThread
+    fun playTrafficRule(message: String, localeTag: String) {
+        speakUiText(message, supportedDisplayLocale(localeTag))
+    }
+
     private fun speakUiText(
         message: String,
-        localeTag: String = "en-US"
+        localeTag: String,
+        source: String = "UI"
     ) {
-        // Only the explicitly enabled parked Debug preview
-        // can request manual learning speech here.
-        if (!isDebugBuild() || !debugParkedPreview) return
+        // Parked learning only. Do not speak while paused.
+        if (isDrivingRestricted ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        ) return
 
         if (message.isBlank() || !ttsReady) {
             ttsStatus = "Speech unavailable"
@@ -635,14 +727,21 @@ class KDriveSituationActivity : ComponentActivity() {
         try {
             // Locale is applied when playback begins.
             val accepted = voiceQueue.offer(
-                key = "UI|${message.hashCode()}|$localeTag",
+                key = "$source|${message.hashCode()}|$localeTag",
                 text = message,
                 locale = localeTag,
-                source = "UI"
+                source = source
             )
 
             if (!accepted) {
-                ttsStatus = "음성 중복 또는 요청 차단"
+                ttsStatus = if (voiceQueue.needsRecovery) {
+                    "TTS 중지 오류: 앱 재시작 필요"
+                } else {
+                    "음성 중복 또는 요청 차단"
+                }
+                if (voiceQueue.needsRecovery) {
+                    Log.e(TAG, "VOICE_QUEUE_RECOVERY_REQUIRED: restart TTS app")
+                }
                 return
             }
 
@@ -700,13 +799,46 @@ class KDriveSituationActivity : ComponentActivity() {
         )
     }
 
-    private fun chooseLanguage(value: String) {
-        language = value
+    @MainThread
+    fun chooseLanguage(value: String) {
+        val localeTag = supportedDisplayLocale(value)
+        if (language != localeTag) voiceQueue.cancelSource("ROUTE_TIPS", "LANGUAGE_CHANGED")
+        language = localeTag
         getSharedPreferences("kdrive_situation", MODE_PRIVATE)
-            .edit().putString("locale", value).apply()
+            .edit().putString("locale", localeTag).apply()
+    }
+
+    @MainThread
+    fun chooseDrivingCountry(value: String) {
+        val country = storedDrivingCountry(value)
+        if (drivingCountry != country) voiceQueue.cancelSource("ROUTE_TIPS", "COUNTRY_CHANGED")
+        drivingCountry = country
+        getSharedPreferences("kdrive_situation", MODE_PRIVATE)
+            .edit().putString("driving_country", country).apply()
+    }
+
+    private fun storedDrivingCountry(value: String): String {
+        val code = value.trim().uppercase(Locale.ROOT)
+        return when (code) {
+            "JP", "AU", "DE" -> code
+            else -> normalizedRegion(code).let { if (it == "US") "US_CA" else it }
+        }
+    }
+
+    @MainThread
+    fun openRouteTips() {
+        if (!isDrivingRestricted && !demoRunning && !demoFinishPending) showRouteTips = true
+    }
+
+    private fun closeRouteTips() {
+        voiceQueue.cancelSource("ROUTE_TIPS", "ROUTE_TIPS_CLOSED")
+        showRouteTips = false
     }
 
     private fun playSituation(id: String, source: String) {
+        if (isDrivingRestricted ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        ) return
 
         if (source == "DEMO") {
             val cueKey =
@@ -786,15 +918,18 @@ class KDriveSituationActivity : ComponentActivity() {
         override fun onReady() { Log.d(TAG, "TTS_READY") }
         override fun onStart() {
             runOnUiThread {
-                if (!closed) ttsStatus = "재생 중"
+                if (!closed) {
+                    voiceQueue.onSdkStarted()
+                    ttsStatus = "재생 중"
+                }
             }
         }
         override fun onUpdatedRms(rms: Double) {}
         override fun onDone() {
             runOnUiThread {
                 if (!closed) {
+                    if (!voiceQueue.onFinished("DONE")) return@runOnUiThread
                     ttsStatus = "재생 완료"
-                    voiceQueue.onFinished("DONE")
                     demoAudioInProgress =
                         voiceQueue.hasSource("DEMO")
 
@@ -809,8 +944,8 @@ class KDriveSituationActivity : ComponentActivity() {
         override fun onStop() {
             runOnUiThread {
                 if (!closed) {
+                    if (!voiceQueue.onFinished("STOP")) return@runOnUiThread
                     ttsStatus = "재생 중지"
-                    voiceQueue.onFinished("STOP")
                     demoAudioInProgress =
                         voiceQueue.hasSource("DEMO")
 
@@ -825,8 +960,8 @@ class KDriveSituationActivity : ComponentActivity() {
         override fun onError(errorType: ErrorType) {
             runOnUiThread {
                 if (!closed) {
+                    if (!voiceQueue.onFinished("ERROR")) return@runOnUiThread
                     ttsStatus = "TTS 오류: $errorType"
-                    voiceQueue.onFinished("ERROR")
                     demoAudioInProgress =
                         voiceQueue.hasSource("DEMO")
 
@@ -847,6 +982,7 @@ class KDriveSituationActivity : ComponentActivity() {
                 if (closed) return@runOnUiThread
 
                 rememberPreviousRoute()
+                routeCancelled = false
                 resetSituationSession("ROUTE_STARTED")
                 routeStartAllowsSameSignature = true
                 Log.d(TAG, "ROUTE_NEW_START_ACCEPTS_CANDIDATES")
@@ -870,7 +1006,11 @@ class KDriveSituationActivity : ComponentActivity() {
 
         override fun onRoutingCompleted() {
             runOnUiThread {
-                if (!closed) { resetSituationSession("ROUTING_COMPLETED"); routeAcceptingTbt = true; requestTbt() }
+                if (!closed && !routeCancelled) {
+                    resetSituationSession("ROUTING_COMPLETED")
+                    routeAcceptingTbt = true
+                    requestTbt()
+                }
             }
         }
 
@@ -891,6 +1031,7 @@ class KDriveSituationActivity : ComponentActivity() {
             runOnUiThread {
                 if (!closed) {
                     rememberPreviousRoute()
+                    routeCancelled = true
                     resetSituationSession("ROUTE_CANCELLED")
                     routeStartAllowsSameSignature = false
                     routeAcceptingTbt = false
@@ -906,7 +1047,7 @@ class KDriveSituationActivity : ComponentActivity() {
                 val signature = tbtSignature(tbtInfoList)
 
                 runOnUiThread {
-                    if (closed || routeAcceptingTbt) return@runOnUiThread
+                    if (closed || routeAcceptingTbt || routeCancelled) return@runOnUiThread
 
                     val old = cancelledTbtSignature
 
@@ -931,7 +1072,7 @@ class KDriveSituationActivity : ComponentActivity() {
                         Log.d(TAG, "NEW_TBT_CANDIDATE_FIRST")
 
                         handler.postDelayed({
-                            if (!closed && !routeAcceptingTbt) {
+                            if (!closed && !routeAcceptingTbt && !routeCancelled) {
                                 requestTbt()
                             }
                         }, 800L)
@@ -991,7 +1132,7 @@ class KDriveSituationActivity : ComponentActivity() {
             runOnUiThread {
                 if (closed) return@runOnUiThread
 
-                if (!routeAcceptingTbt) {
+                if (!routeAcceptingTbt || routeCancelled) {
                     Log.d(TAG, "TBT_UI_UPDATE_SUPPRESSED")
                     return@runOnUiThread
                 }
@@ -1002,6 +1143,10 @@ class KDriveSituationActivity : ComponentActivity() {
                 }
 
                 realCues = cues
+                if (cues.isEmpty()) {
+                    voiceQueue.cancelSource("ROUTE_TIPS", "NO_ROUTE_TIPS")
+                    if (activeCard?.source == "REAL") activeCard = null
+                }
                 naviStatus = "TBT ${tbtInfoList.size}개 / 관련 지점 ${cues.size}개"
 
                 Log.d(TAG, "REAL_TBT total=${tbtInfoList.size} matched=${cues.size}")
@@ -1308,7 +1453,12 @@ class KDriveSituationActivity : ComponentActivity() {
         }
     }
 
-    private fun startDemo() {
+    @MainThread
+    fun startDemo() {
+        if (isDrivingRestricted ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        ) return
+        if (voiceQueue.hasSource("EMERGENCY")) return
         stopDemo()
         demoVoiceMuted = false
         Log.d(TAG, "DEMO_VOICE_UNMUTED_ON_START")
@@ -1335,7 +1485,8 @@ class KDriveSituationActivity : ComponentActivity() {
         handler.postDelayed(demoTask, 700L)
     }
 
-    private fun stopDemo() {
+    @MainThread
+    fun stopDemo() {
         demoDistanceHeldForVoice = false
         demoFinishPending = false
         demoAudioInProgress = false
@@ -1366,10 +1517,18 @@ class KDriveSituationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        language = getSharedPreferences("kdrive_situation", MODE_PRIVATE)
-            .getString("locale", "en-US") ?: "en-US"
-        drivingCountry = getSharedPreferences("kdrive_situation", MODE_PRIVATE)
-            .getString("driving_country", "OTHER") ?: "OTHER"
+        carUxMonitor = if (packageManager.hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_AUTOMOTIVE
+            )
+        ) {
+            KDriveUxMonitor(applicationContext, ::onCarUxStateChanged)
+        } else {
+            null
+        }
+
+        val preferences = getSharedPreferences("kdrive_situation", MODE_PRIVATE)
+        language = supportedDisplayLocale(preferences.getString("locale", null).orEmpty())
+        drivingCountry = storedDrivingCountry(preferences.getString("driving_country", null).orEmpty())
 
         gate.start()
         initializeTts()
@@ -1379,16 +1538,24 @@ class KDriveSituationActivity : ComponentActivity() {
             if (showRouteTips) {
                 MaterialTheme {
                     KDriveRouteTipsPreview(
-                        tollCandidate = routeTipTollPlace,
-                        roundaboutCandidate = routeTipRoundaboutPlace,
+                        tollCandidate = realCues.firstOrNull { it.situationId == "toll" }?.place,
+                        roundaboutCandidate = realCues.firstOrNull { it.situationId == "roundabout" }?.place,
                         selectedLocale = language,
+                        selectedCountry = drivingCountry,
+                        onCountryChange = ::chooseDrivingCountry,
+                        onLocaleChange = ::chooseLanguage,
+                        onSpeak = { text ->
+                            speakUiText(text, language, "ROUTE_TIPS")
+                        },
+                        onStopSpeak = {
+                            stopSpeechByUser()
+                        },
+                        // KDRIVE_COUNTRY_ROUTE_TIPS_V1
                         onOpenLearning = {
-                            showRouteTips = false
+                            closeRouteTips()
                             showTripPrep = true
                         },
-                        onBack = {
-                            showRouteTips = false
-                        }
+                        onBack = ::closeRouteTips
                     )
                 }
             } else if (showTripPrep) {
@@ -1396,14 +1563,8 @@ class KDriveSituationActivity : ComponentActivity() {
                     KDrivePersonalGuideScreen(
                         selectedCountry = drivingCountry,
                         selectedLocale = language,
-                        onCountryChange = { code ->
-                            drivingCountry = code
-                            getSharedPreferences("kdrive_situation", MODE_PRIVATE)
-                                .edit().putString("driving_country", code).apply()
-                        },
-                        onLocaleChange = { code ->
-                            chooseLanguage(code)
-                        },
+                        onCountryChange = ::chooseDrivingCountry,
+                        onLocaleChange = ::chooseLanguage,
                         onPlay = { id ->
                             stopDemo()
                             val title = SituationContent.find(id)?.title ?: id
@@ -1451,102 +1612,118 @@ class KDriveSituationActivity : ComponentActivity() {
                 Column(
                     modifier = Modifier.fillMaxSize()
                 ) {
-                                        // KDRIVE_PARKED_PREVIEW_BUTTON_V1
-                    // Debug-only parked UI preview.
-                    if (isDebugBuild()) {
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = {
-                                debugParkedPreview = !debugParkedPreview
-                                Log.d(
-                                    TAG,
-                                    "PARKED_PREVIEW_ENABLED=$debugParkedPreview"
-                                )
-                            },
-                            modifier = Modifier.padding(
-                                horizontal = 12.dp,
-                                vertical = 4.dp
-                            )
-                        ) {
-                            androidx.compose.material3.Text(
-                                if (debugParkedPreview)
-                                    "Debug Parked Preview: ON"
-                                else
-                                    "Debug Parked Preview: OFF"
-                            )
-                        }
-                    }
-
-// Debug parked-only entry; not a driving UI.
-                    if (isDebugBuild() && debugParkedPreview) {
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = {
-                                routeTipTollPlace =
-                                    if (routeAcceptingTbt) {
-                                        realCues.firstOrNull {
-                                            it.situationId == "toll"
-                                        }?.place
-                                    } else null
-
-                                routeTipRoundaboutPlace =
-                                    if (routeAcceptingTbt) {
-                                        realCues.firstOrNull {
-                                            it.situationId == "roundabout"
-                                        }?.place
-                                    } else null
-
-                                Log.d(
-                                    TAG,
-                                    "PRETRIP_OPEN toll=${routeTipTollPlace != null} " +
-                                        "roundabout=${routeTipRoundaboutPlace != null}"
-                                )
-
-                                showRouteTips = true
-                            },
-                            enabled = !demoRunning,
-                            modifier = Modifier.padding(
-                                horizontal = 12.dp,
-                                vertical = 4.dp
-                            )
-                        ) {
-                            androidx.compose.material3.Text(
-                                "Before You Drive · Route Tips"
-                            )
-                        }
-                    }
-
-                    Row(
-                        horizontalArrangement =
-                            Arrangement.spacedBy(12.dp)
+                    // DEV: parked, or explicit DEBUG emulator preview if UX is unavailable.
+                    if (isDebugBuild() &&
+                        (!isDrivingRestricted ||
+                            (carUxState == KDriveUxState.UNKNOWN &&
+                                debugEmulatorOverrideAllowed()))
                     ) {
-                        Button(
-                            onClick = {
-                                showPc2Ui = false
-                                debugParkedPreview = false
-                            }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = 12.dp,
+                                    vertical = 4.dp
+                                ),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment =
+                                androidx.compose.ui.Alignment.CenterVertically
                         ) {
-                            Text("개발 화면")
+                            OutlinedButton(
+                                onClick = {
+                                    debugUiMenuExpanded = !debugUiMenuExpanded
+                                },
+                                modifier = Modifier.heightIn(min = 44.dp)
+                            ) {
+                                Text(
+                                    if (debugUiMenuExpanded) {
+                                        "DEV 닫기"
+                                    } else {
+                                        "DEV"
+                                    }
+                                )
+                            }
                         }
 
-                        Button(
-                            enabled = isDebugBuild(),
-                            onClick = {
-                                debugParkedPreview = !debugParkedPreview
+                        if (debugUiMenuExpanded) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        horizontal = 12.dp,
+                                        vertical = 4.dp
+                                    ),
+                                colors = CardDefaults.cardColors(
+                                    containerColor =
+                                        MaterialTheme.colorScheme.surface
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        "DEBUG 전용 미리보기입니다. " +
+                                            "실제 정차 상태를 검증하지 않으며, " +
+                                            "실제 차량 주행 중 사용하면 안 됩니다.",
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                        color =
+                                            MaterialTheme.colorScheme.error
+                                    )
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            debugParkedPreview =
+                                                !debugParkedPreview
+
+                                            if (!debugParkedPreview) {
+                                                stopDemo()
+                                            }
+
+                                            Log.d(
+                                                TAG,
+                                                "PARKED_PREVIEW_ENABLED=$debugParkedPreview"
+                                            )
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            if (debugParkedPreview) {
+                                                "정차 UI 미리보기 닫기"
+                                            } else {
+                                                "정차 UI 미리보기 열기"
+                                            }
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            debugUiMenuExpanded = false
+                                            openRouteTips()
+                                        },
+                                        enabled =
+                                            debugParkedPreview && !demoRunning,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Route Tips 개발용 시연")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            stopDemo()
+                                            debugUiMenuExpanded = false
+                                            showPc2Ui = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("기존 개발 화면 열기")
+                                    }
+                                }
                             }
-                        ) {
-                            Text(
-                                if (debugParkedPreview)
-                                    "정차 미리보기 닫기"
-                                else
-                                    "정차 UI 미리보기"
-                            )
                         }
                     }
-
-                    Text(
-                        "DEBUG ONLY · 정차 상태에서만 테스트하세요. " +
-                        "실제 주행 규제 상태는 아직 연결하지 않았습니다."
-                    )
-
                     Box(
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1569,8 +1746,80 @@ class KDriveSituationActivity : ComponentActivity() {
                             },
 
                             onSpeakRequest = { message ->
-                                // PC2 current rule content is English.
-                                speakUiText(message, "en-US")
+                                // KDRIVE_EMERGENCY_UI_BRIDGE_V1
+                                // Temporary PC2 String callback adapter.
+                                // Emergency requests use the dedicated ko-KR
+                                // engine and existing navigation priority gate.
+
+                                val text = message.trim()
+
+                                if (text.isNotEmpty()) {
+                                    val emergency = when {
+                                        text.contains("통역") ||
+                                            text.contains(
+                                                "interpreter",
+                                                ignoreCase = true
+                                            ) ->
+                                            KDriveEmergencyPhrase.INTERPRETER
+
+                                        text.contains("다친 사람") ||
+                                            text.contains("부상자") ||
+                                            text.contains("119") ||
+                                            text.contains(
+                                                "injured",
+                                                ignoreCase = true
+                                            ) ->
+                                            KDriveEmergencyPhrase.INJURY
+
+                                        text.contains("경찰의 도움") ||
+                                            text == "112" ->
+                                            KDriveEmergencyPhrase.POLICE
+
+                                        text.contains("교통사고가 났습니다") ||
+                                            text == "사고 발생" ->
+                                            KDriveEmergencyPhrase.ACCIDENT
+
+                                        else -> null
+                                    }
+
+                                    if (emergency != null) {
+                                        val result =
+                                            playEmergencyPhrase(emergency)
+
+                                        Log.d(
+                                            TAG,
+                                            "EMERGENCY_UI_BRIDGE " +
+                                                "id=${emergency.name} " +
+                                                "result=$result"
+                                        )
+                                    } else {
+                                        // Read the actual PC2 display language.
+                                        // Emergency Korean speech is handled above.
+                                        val displayLanguage =
+                                            getSharedPreferences(
+                                                "kdrive_ui_colors_v2",
+                                                MODE_PRIVATE
+                                            ).getString(
+                                                "startup_language",
+                                                null
+                                            )
+
+                                        val localeTag =
+                                            supportedDisplayLocale(
+                                                displayLanguage ?: language
+                                            )
+
+                                        Log.d(
+                                            TAG,
+                                            "UI_TTS_LOCALE ui=${displayLanguage ?: "fallback"} sdk=$localeTag"
+                                        )
+
+                                        speakUiText(
+                                            text,
+                                            localeTag
+                                        )
+                                    }
+                                }
                             },
 
                             onStopVoiceRequest = {
@@ -1595,13 +1844,9 @@ class KDriveSituationActivity : ComponentActivity() {
                                 }
                             },
 
-                            // Unknown restrictions are fail-closed.
-                            // Full UI is only a manually unlocked
-                            // debug-only parked preview.
-                            isDrivingRestricted = !(
-                                isDebugBuild() &&
-                                debugParkedPreview
-                            )
+                            // Platform CarUxRestrictions governs the parked-only UI.
+                            // UNKNOWN is restricted except explicit DEBUG emulator preview.
+                            isDrivingRestricted = isDrivingRestricted
                         )
                     }
                 }
@@ -1817,7 +2062,44 @@ class KDriveSituationActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+
+        if (carUxMonitor == null) {
+            onCarUxStateChanged(KDriveUxState.UNKNOWN)
+        } else {
+            carUxMonitor?.start()
+        }
+    }
+
+    override fun onPause() {
+        // Parked-only app: stop all audio when the Activity loses focus.
+        stopDemo()
+
+        try {
+            voiceQueue.cancelAll("ACTIVITY_PAUSED")
+        } catch (error: Exception) {
+            Log.e(TAG, "PAUSE_QUEUE_STOP_ERROR", error)
+        }
+
+        try {
+            tts?.stop()
+        } catch (error: Exception) {
+            Log.e(TAG, "PAUSE_TTS_STOP_ERROR", error)
+        }
+
+        super.onPause()
+    }
+
+    override fun onStop() {
+        debugParkedPreview = false
+        carUxMonitor?.stop()
+        onCarUxStateChanged(KDriveUxState.UNKNOWN)
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        carUxMonitor?.stop()
         handler.removeCallbacks(naviAuditPollTask)
         naviAuditRemainingPolls = 0
         voiceQueue.close()

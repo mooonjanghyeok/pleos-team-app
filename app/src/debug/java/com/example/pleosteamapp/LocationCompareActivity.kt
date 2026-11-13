@@ -201,6 +201,13 @@ class LocationCompareActivity : ComponentActivity() {
             }
 
             // Android GPS의 마지막 저장 위치
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
             val cached = manager.getLastKnownLocation(
                 LocationManager.GPS_PROVIDER
             )
@@ -213,6 +220,22 @@ class LocationCompareActivity : ComponentActivity() {
             }
 
             // 실제 위치 변경 이벤트 등록
+            // Permission may have been revoked after the UI check.
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
+            // Permission may have been revoked after the UI check.
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
             manager.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER,
                 1000L,
@@ -226,6 +249,14 @@ class LocationCompareActivity : ComponentActivity() {
 
             Log.d(TAG, "ANDROID_GPS_LISTENER_STARTED")
 
+        } catch (error: SecurityException) {
+            gpsListening = false
+            gpsStatus = "GPS 위치 권한이 취소되었습니다"
+            Log.w(TAG, "GPS_PERMISSION_REVOKED", error)
+        } catch (error: SecurityException) {
+            gpsListening = false
+            gpsStatus = "GPS 위치 권한이 취소되었습니다"
+            Log.w(TAG, "GPS_PERMISSION_REVOKED", error)
         } catch (error: Exception) {
 
             gpsStatus =

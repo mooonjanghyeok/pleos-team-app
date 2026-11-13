@@ -1,34 +1,22 @@
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
-    <uses-permission
-        android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application>
 
-        <activity
-            android:name=".TtsTestActivity"
-            android:exported="true" />
+        <activity android:name=".TtsTestActivity" android:exported="true" />
 
-        <activity
-            android:name=".RouteApproachLabActivity"
-            android:exported="true" />
+        <activity android:name=".RouteApproachLabActivity" android:exported="true" />
 
-        <activity
-            android:name=".LocationCompareActivity"
-            android:exported="true" />
+        <activity android:name=".LocationCompareActivity" android:exported="true" />
 
-        <activity
-            android:name=".GpsTriggerLabActivity"
-            android:exported="true" />
+        <activity android:name=".GpsTriggerLabActivity" android:exported="true" />
 
-        <activity
-            android:name=".KDriveGuideActivity"
-            android:exported="true" />
+        <activity android:name=".KDriveGuideActivity" android:exported="true" />
 
-    </application>
+    <activity android:name="com.example.pleosteamapp.KDriveLanguageTestActivity" android:exported="true" /><activity android:name="com.example.pleosteamapp.KDriveAudioGateLabActivity" android:exported="true" /><activity android:name="com.example.pleosteamapp.KDriveAudioAutoLabActivity" android:exported="true" /><activity android:name="com.example.pleosteamapp.KDriveRealAudioProbeActivity" android:exported="true" /></application>
 
 </manifest>

@@ -811,6 +811,22 @@ class KDriveGuideActivity : ComponentActivity() {
                 return
             }
 
+            // Permission may have been revoked after the UI check.
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
+            // Permission may have been revoked after the UI check.
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
             manager.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER,
                 1000L,
@@ -822,6 +838,14 @@ class KDriveGuideActivity : ComponentActivity() {
             gpsRegistered = true
             gpsStatus = "GPS 수신 대기 중"
 
+        } catch (error: SecurityException) {
+            gpsRegistered = false
+            gpsStatus = "GPS 위치 권한이 취소되었습니다"
+            Log.w(TAG, "GPS_PERMISSION_REVOKED", error)
+        } catch (error: SecurityException) {
+            gpsRegistered = false
+            gpsStatus = "GPS 위치 권한이 취소되었습니다"
+            Log.w(TAG, "GPS_PERMISSION_REVOKED", error)
         } catch (error: Exception) {
             gpsStatus = "GPS 시작 실패: ${error.message}"
             Log.e(TAG, "GPS_START_FAILED", error)

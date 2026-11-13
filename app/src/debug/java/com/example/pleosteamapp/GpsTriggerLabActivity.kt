@@ -209,6 +209,22 @@ class GpsTriggerLabActivity : ComponentActivity() {
                 return
             }
 
+            // Permission may have been revoked after the UI check.
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
+            // Permission may have been revoked after the UI check.
+            if (checkSelfPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+                gpsStatus = "정밀 위치 권한이 없습니다"
+                return
+            }
+
             manager.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER,
                 1000L,
@@ -222,6 +238,14 @@ class GpsTriggerLabActivity : ComponentActivity() {
 
             Log.d(TAG, "GPS_LISTENER_STARTED")
 
+        } catch (error: SecurityException) {
+            gpsRegistered = false
+            gpsStatus = "GPS 위치 권한이 취소되었습니다"
+            Log.w(TAG, "GPS_PERMISSION_REVOKED", error)
+        } catch (error: SecurityException) {
+            gpsRegistered = false
+            gpsStatus = "GPS 위치 권한이 취소되었습니다"
+            Log.w(TAG, "GPS_PERMISSION_REVOKED", error)
         } catch (error: Exception) {
 
             gpsStatus =
