@@ -26,10 +26,11 @@ pc2 github 연결테스트성공
 - 패키지명: com.example.pleosteamapp
 
 ### 테스트 환경
-- Pleos Connect 에뮬레이터 버전: 정확한 Pleos 버전 확인 필요
-- 에뮬레이터 빌드 식별자: 확인 필요
-- Android 버전: 확인 필요
-- 화면 규격: 확인 필요
+- 플랫폼: Pleos Connect / Android Automotive OS
+- 에뮬레이터 모델: Connect on x86_64 emulator
+- 에뮬레이터 빌드: RELEASE.release_connect_v2.1.0 test-keys
+- Android 버전: 14
+- 화면 해상도: 2560 × 1440
 
 ### APK
 - 파일 경로: apk/카더라_K-DRIVE_GUIDE_release.apk
